@@ -1,0 +1,23 @@
+{
+  "appTitle": "台灣大眾運輸即時資訊",
+  "searchPlaceholder": "輸入站名搜尋",
+  "selectCity": "選擇縣市",
+  "searchButton": "搜尋",
+  "noResults": "查無符合的站牌",
+  "loading": "載入中...",
+  "errorPrefix": "發生錯誤：",
+  "stopDetailTitle": "即時到站資訊",
+  "route": "路線",
+  "direction": "去返程",
+  "directionGo": "去程",
+  "directionBack": "返程",
+  "estimateArriving": "即將到站",
+  "estimateMinutes": "約 {{minutes}} 分鐘",
+  "estimateNotDeparted": "尚未發車",
+  "estimateNoService": "今日未營運",
+  "estimateNoInfo": "無資料",
+  "refresh": "重新整理",
+  "autoRefreshHint": "每 20 秒自動更新",
+  "backToSearch": "返回搜尋",
+  "languageToggle": "English"
+}

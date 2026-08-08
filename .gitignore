@@ -1,0 +1,18 @@
+# Node / web
+node_modules/
+web/dist/
+web/.env
+web/.env.local
+
+# Cloudflare Worker
+worker/.wrangler/
+worker/node_modules/
+
+# QGIS script generated data (regenerate via tdx_taichung_bus_schematic.py)
+cache_stations.json
+cache_stop_of_route.json
+*.gpkg
+
+# OS
+.DS_Store
+Thumbs.db

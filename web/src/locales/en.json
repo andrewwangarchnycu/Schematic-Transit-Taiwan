@@ -1,0 +1,23 @@
+{
+  "appTitle": "Taiwan Transit Live",
+  "searchPlaceholder": "Search by stop name",
+  "selectCity": "Select city/county",
+  "searchButton": "Search",
+  "noResults": "No matching stops found",
+  "loading": "Loading...",
+  "errorPrefix": "Error: ",
+  "stopDetailTitle": "Live Arrivals",
+  "route": "Route",
+  "direction": "Direction",
+  "directionGo": "Outbound",
+  "directionBack": "Inbound",
+  "estimateArriving": "Arriving now",
+  "estimateMinutes": "~{{minutes}} min",
+  "estimateNotDeparted": "Not yet departed",
+  "estimateNoService": "No service today",
+  "estimateNoInfo": "No data",
+  "refresh": "Refresh",
+  "autoRefreshHint": "Auto-refreshes every 20s",
+  "backToSearch": "Back to search",
+  "languageToggle": "中文"
+}

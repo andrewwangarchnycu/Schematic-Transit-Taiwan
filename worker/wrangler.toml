@@ -1,0 +1,7 @@
+name = "tw-transit-proxy"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Secrets (never put these here as plain values):
+#   wrangler secret put TDX_CLIENT_ID
+#   wrangler secret put TDX_CLIENT_SECRET
