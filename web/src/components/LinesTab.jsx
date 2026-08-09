@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import CitySelect from "./CitySelect.jsx";
 import SearchBar from "./SearchBar.jsx";
-import { searchRoutes, getRouteStops } from "../api/client.js";
+import { searchRoutes, getRouteStops, getStopEta } from "../api/client.js";
+import { minutesUntil, formatEstimate } from "../utils/eta.js";
 
 const ROUTE_LINE_COLOR = "#c0392b";
+const ETA_REFRESH_MS = 20000;
 
 function localized(field, lang) {
   return lang === "zh-TW" ? field?.Zh_tw : field?.En || field?.Zh_tw;
@@ -56,6 +58,36 @@ export default function LinesTab({ setMapState }) {
   const stopsSorted = current
     ? [...(current.Stops || [])].sort((a, b) => (a.StopSequence ?? 0) - (b.StopSequence ?? 0))
     : [];
+
+  const stopIds = useMemo(
+    () => [...new Set(stopsSorted.map((s) => s.StopID).filter(Boolean))],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [current]
+  );
+  const [etas, setEtas] = useState([]);
+
+  useEffect(() => {
+    if (stopIds.length === 0) {
+      setEtas([]);
+      return undefined;
+    }
+    let cancelled = false;
+    function load() {
+      getStopEta(city, stopIds)
+        .then((data) => {
+          if (!cancelled) setEtas(data);
+        })
+        .catch(() => {
+          if (!cancelled) setEtas([]);
+        });
+    }
+    load();
+    const interval = setInterval(load, ETA_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [city, stopIds]);
 
   useEffect(() => {
     const withPos = stopsSorted.filter((s) => s.StopPosition);
@@ -133,11 +165,23 @@ export default function LinesTab({ setMapState }) {
               {error}
             </p>
           )}
+          {!loading && stopsSorted.length > 0 && <p className="hint-text">{t("autoRefreshHint")}</p>}
 
           <ol className="route-stop-list">
-            {stopsSorted.map((s, idx) => (
-              <li key={`${s.StopUID}-${idx}`}>{localized(s.StopName, i18n.language)}</li>
-            ))}
+            {stopsSorted.map((s, idx) => {
+              const stopEta = etas.find((e) => e.StopID === s.StopID && e.Direction === activeDirection);
+              const minutes = stopEta ? minutesUntil(stopEta) : null;
+              return (
+                <li key={`${s.StopUID}-${idx}`}>
+                  <span>{localized(s.StopName, i18n.language)}</span>
+                  {stopEta && (
+                    <span className={`eta-time ${minutes != null && minutes <= 1.5 ? "eta-soon" : ""}`}>
+                      {formatEstimate(stopEta, t)}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ol>
         </div>
       )}

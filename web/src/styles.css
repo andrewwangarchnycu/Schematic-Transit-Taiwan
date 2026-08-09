@@ -364,6 +364,10 @@ button, input, select {
 }
 
 .route-stop-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
   padding: 0.5rem 0.8rem;
   border-radius: var(--radius-sm);
   background: var(--color-surface-alt);
