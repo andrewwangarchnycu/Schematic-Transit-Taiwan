@@ -61,8 +61,9 @@ export default function MapView({ markers = [], polylines = [], onMapClick }) {
   return (
     <MapContainer center={TAIWAN_CENTER} zoom={8} className="map-view">
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution='Map <a href="https://memomaps.de/">memomaps.de</a> <a href="https://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        url="https://tile.memomaps.de/tilegen/{z}/{x}/{y}.png"
+        maxZoom={18}
       />
       <FitBounds points={fitPoints} />
       {onMapClick && <ClickHandler onMapClick={onMapClick} />}

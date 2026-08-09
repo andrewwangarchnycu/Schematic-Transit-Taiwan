@@ -1,6 +1,13 @@
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8787";
+// The production build fails at build time (see vite.config.js) if
+// VITE_API_BASE isn't set, so this dev-only fallback can never end up in a
+// deployed bundle -- it only exists to make `npm run dev` work with zero
+// config when the local Worker is running on its default port.
+const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.DEV ? "http://localhost:8787" : "");
 
 async function getJson(path, params) {
+  if (!API_BASE) {
+    throw new Error("API not configured (VITE_API_BASE missing)");
+  }
   const qs = new URLSearchParams(params);
   const resp = await fetch(`${API_BASE}${path}?${qs.toString()}`);
   if (!resp.ok) {
