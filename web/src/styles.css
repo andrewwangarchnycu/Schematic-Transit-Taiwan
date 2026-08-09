@@ -611,7 +611,7 @@ button, input, select {
 
 .schematic-panel {
   position: relative;
-  background: #0d1b2a;
+  background: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -619,7 +619,7 @@ button, input, select {
 }
 
 .schematic-placeholder {
-  color: #90a4b8;
+  color: var(--color-text-muted);
 }
 
 .schematic-viewport {
@@ -655,7 +655,7 @@ button, input, select {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  border: none;
+  border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-text);
   font-size: 1.1rem;

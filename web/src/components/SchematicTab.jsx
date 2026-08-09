@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import CitySelect from "./CitySelect.jsx";
-import { getNetwork, getStationStops, getStopEta } from "../api/client.js";
+import { getCities, getNetworkManifest, getStaticNetwork, getStationStops, getStopEta } from "../api/client.js";
 import { buildSchematic, computeGridBounds, makeProjector } from "../schematic/gridSnap.js";
 import { minutesUntil, formatEstimate } from "../utils/eta.js";
 
@@ -22,6 +21,26 @@ export default function SchematicTab() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [highlightedKey, setHighlightedKey] = useState(null);
+
+  // Available cities come from the static snapshot's manifest, not the
+  // live /api/cities list -- only cities someone has actually run
+  // `npm run fetch-network` for have a schematic to show. Still use
+  // /api/cities (cached, cheap) for bilingual display names.
+  const [manifest, setManifest] = useState([]);
+  const [cityNames, setCityNames] = useState({});
+
+  useEffect(() => {
+    getNetworkManifest().then(setManifest);
+    getCities()
+      .then((cities) => {
+        const map = {};
+        cities.forEach((c) => {
+          map[c.City] = c.CityName;
+        });
+        setCityNames(map);
+      })
+      .catch(() => {});
+  }, []);
 
   const [selectedNode, setSelectedNode] = useState(null);
   const [nodeEtas, setNodeEtas] = useState([]);
@@ -46,7 +65,7 @@ export default function SchematicTab() {
     setHighlightedKey(null);
     setSelectedNode(null);
     setView({ scale: 1, x: 0, y: 0 });
-    getNetwork(city)
+    getStaticNetwork(city)
       .then(setNetwork)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -185,7 +204,15 @@ export default function SchematicTab() {
   return (
     <>
       <aside className="side-panel">
-        <CitySelect value={city} onChange={setCity} />
+        <select className="city-select" value={city} onChange={(e) => setCity(e.target.value)}>
+          <option value="">{t("selectCity")}</option>
+          {manifest.map((code) => (
+            <option key={code} value={code}>
+              {i18n.language === "zh-TW" ? cityNames[code]?.Zh_tw : cityNames[code]?.En || code}
+            </option>
+          ))}
+        </select>
+        {manifest.length === 0 && <p className="hint-text">{t("schematicNoManifest")}</p>}
 
         <label className="cell-size-label">
           {t("schematicCellSize")}: {cellSize} m
@@ -263,14 +290,26 @@ export default function SchematicTab() {
               preserveAspectRatio="xMidYMid meet"
               style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
             >
+              {/* Taipei-MRT-style: bold colored line bands, white-disc
+                  stations with a heavier ring (and a name label) at
+                  interchanges. Real system maps get this clean look because
+                  each line has exclusive track and never truly overlaps
+                  another; a bus network's routes constantly share the same
+                  roads, so this styling reads well per isolated/highlighted
+                  line but the full unfiltered view is inherently denser --
+                  full parallel-corridor line bundling (offsetting
+                  co-routed segments into separate parallel bands the way a
+                  real system map's shared trunks are drawn) is a
+                  substantially bigger layout algorithm this doesn't
+                  attempt. */}
               {schematic.lines.map((line) => (
                 <polyline
                   key={line.key}
                   points={line.path.map(([x, y]) => `${toSvgX(x)},${toSvgY(y)}`).join(" ")}
                   fill="none"
                   stroke={line.color}
-                  strokeWidth={highlightedKey === line.key ? 5 : 2.5}
-                  strokeOpacity={highlightedKey && highlightedKey !== line.key ? 0.25 : 0.9}
+                  strokeWidth={highlightedKey === line.key ? 7 : 4}
+                  strokeOpacity={highlightedKey && highlightedKey !== line.key ? 0.18 : 0.95}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   onClick={() => setHighlightedKey((prev) => (prev === line.key ? null : line.key))}
@@ -283,15 +322,33 @@ export default function SchematicTab() {
                   key={node.key}
                   cx={toSvgX(node.gx)}
                   cy={toSvgY(node.gy)}
-                  r={node.isInterchange ? 5 : 2.5}
+                  r={node.isInterchange ? 7 : 3}
                   fill={selectedNode?.key === node.key ? "#4da3ff" : "#fff"}
-                  stroke="#222"
-                  strokeWidth={node.isInterchange ? 1.5 : 1}
+                  stroke="#1a1a1a"
+                  strokeWidth={node.isInterchange ? 3 : 1.25}
                   onClick={() => selectNode(node)}
                 >
                   <title>{node.name}</title>
                 </circle>
               ))}
+              {schematic.nodes
+                .filter((n) => n.isInterchange)
+                .map((node) => (
+                  <text
+                    key={`label-${node.key}`}
+                    x={toSvgX(node.gx) + 11}
+                    y={toSvgY(node.gy) + 4}
+                    fontSize="12"
+                    fontWeight="600"
+                    fill="#1a1a1a"
+                    stroke="#fff"
+                    strokeWidth="3"
+                    paintOrder="stroke"
+                    style={{ pointerEvents: "none" }}
+                  >
+                    {node.name}
+                  </text>
+                ))}
               {userGridPoint && (
                 <circle cx={toSvgX(userGridPoint[0])} cy={toSvgY(userGridPoint[1])} r={6} fill="#4285f4" stroke="#fff" strokeWidth={2} />
               )}

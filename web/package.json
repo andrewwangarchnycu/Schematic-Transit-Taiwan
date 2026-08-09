@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "fetch-network": "node scripts/fetch-network.mjs"
   },
   "dependencies": {
     "i18next": "^23.15.1",

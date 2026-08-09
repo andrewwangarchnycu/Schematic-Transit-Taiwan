@@ -49,6 +49,7 @@
   "schematicStats": "Showing {{stations}} stations, {{routes}} route segments",
   "schematicHint": "Click a line to highlight it; hover a station or line to see its name",
   "schematicEmpty": "Pick a city then press \"Generate schematic\"",
+  "schematicNoManifest": "No static network snapshot has been generated for any city yet",
 
   "nearbyButton": "Nearby stops",
   "nearbyEmpty": "No nearby stops found",

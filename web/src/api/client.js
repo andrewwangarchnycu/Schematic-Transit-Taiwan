@@ -40,8 +40,22 @@ export function searchRoutes(city, keyword) {
   return getJson("/api/route-search", { city, keyword });
 }
 
-export function getNetwork(city) {
-  return getJson("/api/network", { city });
+// Schematic tab data: a fixed snapshot in web/public/data/, regenerated
+// manually via `npm run fetch-network` (see scripts/fetch-network.mjs)
+// rather than fetched live -- network topology barely changes, and every
+// live /api/network call was several TDX requests against a tight quota.
+export async function getNetworkManifest() {
+  const resp = await fetch(`${import.meta.env.BASE_URL}data/manifest.json`);
+  if (!resp.ok) return [];
+  return resp.json();
+}
+
+export async function getStaticNetwork(city) {
+  const resp = await fetch(`${import.meta.env.BASE_URL}data/network-${encodeURIComponent(city)}.json`);
+  if (!resp.ok) {
+    throw new Error(`No static network snapshot for ${city} yet`);
+  }
+  return resp.json();
 }
 
 export function planTrip(origin, destination) {
