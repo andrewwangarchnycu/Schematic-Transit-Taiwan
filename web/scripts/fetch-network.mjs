@@ -3,27 +3,100 @@
 // reads from web/public/data/. Deliberately not called at build time or
 // runtime -- the whole point is that the schematic uses a fixed snapshot
 // the site owner refreshes on their own schedule, not a live TDX fetch on
-// every visit (network topology barely changes day to day, and every
-// live fetch was burning this account's tight TDX rate limit).
+// every visit.
+//
+// Talks to TDX directly (same auth + pagination shape as
+// tdx_taichung_bus_schematic.py) rather than going through the deployed
+// Worker's /api/network: a mid-size city's Bus/Station + Bus/StopOfRoute
+// pull can take 20-30 paginated calls, and this account's TDX plan allows
+// only 5 requests/minute -- properly spacing that (12s between every call)
+// takes minutes, which is far past what a single Cloudflare Worker
+// invocation is allowed to run. A plain Node script has no such ceiling.
 //
 // Usage:
-//   node scripts/fetch-network.mjs Taichung [Taipei NewTaipei ...]
-//
-// Pulls from the already-deployed Worker's /api/network (which does the
-// TDX auth, pagination, and trimming), not from TDX directly -- no
-// credentials needed here.
+//   TDX_CLIENT_ID=... TDX_CLIENT_SECRET=... node scripts/fetch-network.mjs Taichung [City...]
+//   (or export them / put them in your shell profile first)
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-const WORKER_BASE = process.env.WORKER_BASE || "https://tw-transit-proxy.890718ding3316.workers.dev";
+const AUTH_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token";
+const API_BASE = "https://tdx.transportdata.tw/api/basic/v2";
 const OUT_DIR = fileURLToPath(new URL("../public/data/", import.meta.url));
+
+// TDX plan on this account: 5 requests/minute. 12.5s spacing gives a small
+// safety margin over the exact 12s (60/5) boundary.
+const REQUEST_INTERVAL_MS = 12500;
+let lastRequestAt = 0;
+
+async function throttle() {
+  const wait = lastRequestAt + REQUEST_INTERVAL_MS - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastRequestAt = Date.now();
+}
+
+async function getToken(clientId, clientSecret) {
+  await throttle();
+  const body = new URLSearchParams({ grant_type: "client_credentials", client_id: clientId, client_secret: clientSecret });
+  const resp = await fetch(AUTH_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (!resp.ok) throw new Error(`TDX auth failed (${resp.status}): ${await resp.text()}`);
+  const payload = await resp.json();
+  return payload.access_token;
+}
+
+async function tdxGetAllPages(token, path, label) {
+  const pageSize = 1000;
+  const results = [];
+  let skip = 0;
+  while (true) {
+    await throttle();
+    const qs = new URLSearchParams({ $top: String(pageSize), $skip: String(skip), $format: "JSON" });
+    const url = `${API_BASE}${path}?${qs.toString()}`;
+    process.stdout.write(`  ${label}: page at skip=${skip}... `);
+    const resp = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+    if (!resp.ok) throw new Error(`TDX GET ${path} failed (${resp.status}): ${await resp.text()}`);
+    const page = await resp.json();
+    console.log(`${page.length} rows`);
+    if (!page || page.length === 0) break;
+    results.push(...page);
+    if (page.length < pageSize) break;
+    skip += pageSize;
+  }
+  return results;
+}
+
+function trimNetwork(stations, stopOfRoute) {
+  return {
+    stations: stations.map((s) => ({
+      StationID: s.StationID,
+      StationName: s.StationName,
+      StationPosition: s.StationPosition,
+    })),
+    routes: stopOfRoute.map((r) => ({
+      RouteID: r.RouteID,
+      RouteName: r.RouteName,
+      Direction: r.Direction,
+      Stops: (r.Stops || [])
+        .sort((a, b) => (a.StopSequence ?? 0) - (b.StopSequence ?? 0))
+        .map((st) => ({ StationID: st.StationID, StopSequence: st.StopSequence })),
+    })),
+  };
+}
 
 async function main() {
   const cities = process.argv.slice(2);
   if (cities.length === 0) {
-    console.error("Usage: node scripts/fetch-network.mjs <City> [City...]");
-    console.error("Example: node scripts/fetch-network.mjs Taichung");
+    console.error("Usage: TDX_CLIENT_ID=... TDX_CLIENT_SECRET=... node scripts/fetch-network.mjs <City> [City...]");
+    process.exit(1);
+  }
+  const clientId = process.env.TDX_CLIENT_ID;
+  const clientSecret = process.env.TDX_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    console.error("Set TDX_CLIENT_ID and TDX_CLIENT_SECRET environment variables first.");
     process.exit(1);
   }
 
@@ -37,17 +110,21 @@ async function main() {
     // no manifest yet, start fresh
   }
 
+  console.log(`Rate limit: 5 req/min -> pacing every ${REQUEST_INTERVAL_MS}ms. This will take a while for a big city.`);
+  const token = await getToken(clientId, clientSecret);
+
   for (const city of cities) {
-    process.stdout.write(`Fetching ${city}... `);
-    const resp = await fetch(`${WORKER_BASE}/api/network?city=${encodeURIComponent(city)}`);
-    if (!resp.ok) {
-      console.log(`FAILED (HTTP ${resp.status})`);
-      continue;
+    console.log(`\nFetching ${city}...`);
+    try {
+      const stations = await tdxGetAllPages(token, `/Bus/Station/City/${encodeURIComponent(city)}`, "Station");
+      const stopOfRoute = await tdxGetAllPages(token, `/Bus/StopOfRoute/City/${encodeURIComponent(city)}`, "StopOfRoute");
+      const data = trimNetwork(stations, stopOfRoute);
+      await writeFile(new URL(`network-${city}.json`, `file://${OUT_DIR}/`), JSON.stringify(data));
+      console.log(`OK -- ${data.stations.length} stations, ${data.routes.length} route segments`);
+      if (!manifest.includes(city)) manifest.push(city);
+    } catch (err) {
+      console.error(`  FAILED: ${err.message}`);
     }
-    const data = await resp.json();
-    await writeFile(new URL(`network-${city}.json`, `file://${OUT_DIR}/`), JSON.stringify(data));
-    console.log(`OK -- ${data.stations.length} stations, ${data.routes.length} route segments`);
-    if (!manifest.includes(city)) manifest.push(city);
   }
 
   manifest.sort();

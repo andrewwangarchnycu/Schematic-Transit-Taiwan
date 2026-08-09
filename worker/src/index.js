@@ -105,11 +105,24 @@ function tdxBasicGet(env, path, params) {
 // Bus/Station and Bus/StopOfRoute cap out at 1000 rows per call regardless
 // of the requested $top, same as TDX's other list endpoints; page with
 // $skip until a short page comes back (mirrors tdx_taichung_bus_schematic.py).
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function tdxBasicGetAllPages(env, path, params) {
   const pageSize = 1000;
   const results = [];
   let skip = 0;
+  let first = true;
   while (true) {
+    // Courtesy gap between pages of the same pull so incidental callers of
+    // this endpoint don't burst TDX back-to-back. This can't guarantee the
+    // account's real 5-req/min cap for a big city (10+ pages at a proper
+    // 12s/req spacing would exceed a single Worker invocation's execution
+    // limit) -- that's what scripts/fetch-network.mjs is for, running the
+    // paginated pull directly against TDX with no such time ceiling.
+    if (!first) await sleep(400);
+    first = false;
     const page = await tdxBasicGet(env, path, { ...params, $top: String(pageSize), $skip: String(skip) });
     if (!page || page.length === 0) break;
     results.push(...page);
@@ -337,10 +350,16 @@ async function handleNetwork(env, url) {
     return jsonResponse({ error: "city query param is required" }, 400);
   }
 
-  const [stations, stopOfRoute] = await Promise.all([
-    tdxBasicGetAllPages(env, `/Bus/Station/City/${encodeURIComponent(city)}`, {}),
-    tdxBasicGetAllPages(env, `/Bus/StopOfRoute/City/${encodeURIComponent(city)}`, {}),
-  ]);
+  // Sequential, not Promise.all -- two paginated pulls racing in parallel
+  // doubles the peak request rate right when it's most likely to trip the
+  // rate limit. Note: this endpoint is no longer on the Schematic tab's
+  // live path (see scripts/fetch-network.mjs) precisely because a big
+  // city's full pagination can't fit a proper 5-req/min pace inside a
+  // single Worker invocation's execution limit -- it's kept for
+  // programmatic/manual use where the caller can retry across separate
+  // requests if needed.
+  const stations = await tdxBasicGetAllPages(env, `/Bus/Station/City/${encodeURIComponent(city)}`, {});
+  const stopOfRoute = await tdxBasicGetAllPages(env, `/Bus/StopOfRoute/City/${encodeURIComponent(city)}`, {});
 
   return jsonResponse({
     stations: stations.map((s) => ({
