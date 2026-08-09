@@ -47,3 +47,9 @@ export function planTrip(origin, destination) {
     destination: `${destination.lat},${destination.lng}`,
   });
 }
+
+export function getNearby(lat, lng, city, radius = 500) {
+  const params = { lat, lng, radius };
+  if (city) params.city = city;
+  return getJson("/api/nearby", params);
+}

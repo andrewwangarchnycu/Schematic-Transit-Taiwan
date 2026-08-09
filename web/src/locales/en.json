@@ -48,5 +48,17 @@
   "schematicLoadingHint": "Downloading and computing the citywide network, larger cities may take a few seconds...",
   "schematicStats": "Showing {{stations}} stations, {{routes}} route segments",
   "schematicHint": "Click a line to highlight it; hover a station or line to see its name",
-  "schematicEmpty": "Pick a city then press \"Generate schematic\""
+  "schematicEmpty": "Pick a city then press \"Generate schematic\"",
+
+  "nearbyButton": "Nearby stops",
+  "nearbyEmpty": "No nearby stops found",
+  "nearbyRouteCount": "{{count}} routes",
+  "nearbyBikeRent": "Bikes available",
+  "nearbyBikeReturn": "Docks available",
+  "nearbyTowards": "toward",
+  "mode_bus": "Bus",
+  "mode_thsr": "THSR",
+  "mode_tra": "TRA",
+  "mode_metro": "Metro",
+  "mode_bike": "YouBike"
 }

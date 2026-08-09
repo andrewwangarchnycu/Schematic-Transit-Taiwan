@@ -48,5 +48,17 @@
   "schematicLoadingHint": "正在下載並運算全市路網，大城市可能需要幾秒鐘...",
   "schematicStats": "已顯示 {{stations}} 個站點、{{routes}} 條路線區段",
   "schematicHint": "點擊路線可強調顯示；滑鼠移到站點或路線上可看名稱",
-  "schematicEmpty": "選擇縣市後按下「產生路網圖」"
+  "schematicEmpty": "選擇縣市後按下「產生路網圖」",
+
+  "nearbyButton": "附近站牌",
+  "nearbyEmpty": "附近沒有找到站牌",
+  "nearbyRouteCount": "{{count}} 條路線經過",
+  "nearbyBikeRent": "可借車輛",
+  "nearbyBikeReturn": "可還空位",
+  "nearbyTowards": "往",
+  "mode_bus": "公車",
+  "mode_thsr": "高鐵",
+  "mode_tra": "台鐵",
+  "mode_metro": "捷運",
+  "mode_bike": "YouBike"
 }

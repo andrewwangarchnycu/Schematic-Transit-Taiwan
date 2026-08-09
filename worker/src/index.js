@@ -24,6 +24,13 @@
  *          the Schematic tab to compute a grid-simplified map client-side
  *   GET /api/routing?origin=lat,lng&destination=lat,lng[&gc=&top=&transit=&...]
  *       -> TDX MaaS multi-modal trip planning, proxied as-is
+ *   GET /api/nearby?lat=&lng=&city=&radius=(default 500m)
+ *       -> [{ mode: "bus"|"tra"|"thsr"|"metro"|"bike", id, name, distance, live }, ...]
+ *          nearest stations across every mode, with live info attached for
+ *          every mode except bus (bus reuses /api/stop-eta on click instead,
+ *          to avoid an ETA fetch per nearby bus stop). city is required for
+ *          bus/bike (both are city-partitioned in TDX); TRA/THSR/Metro are
+ *          nationwide and work without it.
  *
  * Setup:
  *   wrangler secret put TDX_CLIENT_ID
@@ -101,6 +108,34 @@ async function tdxBasicGetAllPages(env, path, params) {
     skip += pageSize;
   }
   return results;
+}
+
+// Nationwide station lists (TRA/THSR/Metro) barely change; cache them with
+// a long TTL keyed on their own request so /api/nearby doesn't re-fetch a
+// whole system's station list on every search -- only the live info calls
+// for stations that actually land inside the search radius stay uncached.
+async function cachedTdxBasicGet(env, ctx, path, params, ttlSeconds) {
+  const qs = new URLSearchParams({ ...params, $format: "JSON" });
+  const cacheKey = new Request(`https://tdx-cache.internal${path}?${qs.toString()}`);
+  const cache = caches.default;
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit.json();
+  const data = await tdxBasicGet(env, path, params);
+  const resp = new Response(JSON.stringify(data), {
+    headers: { "Cache-Control": `public, max-age=${ttlSeconds}` },
+  });
+  ctx.waitUntil(cache.put(cacheKey, resp));
+  return data;
+}
+
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
 }
 
 function jsonResponse(data, status = 200) {
@@ -305,6 +340,194 @@ async function handleRouting(env, url) {
   return jsonResponse(result);
 }
 
+const METRO_SYSTEMS = ["TRTC", "KRTC", "TYMC", "TMRT", "NTMC", "KLRT", "TRTCMG"];
+const STATION_LIST_CACHE_TTL = 24 * 60 * 60;
+
+function nearbyFromList(list, lat, lng, radius) {
+  return list
+    .filter((s) => s.StationPosition)
+    .map((s) => ({ station: s, distance: haversineMeters(lat, lng, s.StationPosition.PositionLat, s.StationPosition.PositionLon) }))
+    .filter((s) => s.distance <= radius);
+}
+
+async function handleNearby(env, ctx, url) {
+  const lat = parseFloat(url.searchParams.get("lat"));
+  const lng = parseFloat(url.searchParams.get("lng"));
+  const city = url.searchParams.get("city");
+  const radius = Math.min(parseInt(url.searchParams.get("radius") || "500", 10) || 500, 2000);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return jsonResponse({ error: "lat and lng query params are required" }, 400);
+  }
+
+  const results = [];
+
+  // Bus: city-partitioned, uses TDX's own spatial filter so we never pull a
+  // whole city's station list just to find a handful of nearby stops.
+  if (city) {
+    try {
+      const busStations = await tdxBasicGet(env, `/Bus/Station/City/${encodeURIComponent(city)}`, {
+        $spatialFilter: `nearby(${lat},${lng},${radius})`,
+        $top: "15",
+      });
+      for (const s of busStations) {
+        if (!s.StationPosition) continue;
+        results.push({
+          mode: "bus",
+          id: s.StationID,
+          city,
+          name: s.StationName?.Zh_tw || s.StationName?.En,
+          lat: s.StationPosition.PositionLat,
+          lng: s.StationPosition.PositionLon,
+          distance: Math.round(haversineMeters(lat, lng, s.StationPosition.PositionLat, s.StationPosition.PositionLon)),
+          routeCount: (s.Stops || []).length,
+          // Same shape /api/search returns, so the frontend can hand this
+          // straight to <StopDetail> on click without a second fetch.
+          station: {
+            StationID: s.StationID,
+            StationName: s.StationName,
+            StationPosition: s.StationPosition,
+            Stops: (s.Stops || []).map((st) => ({
+              RouteID: st.RouteID,
+              RouteName: st.RouteName,
+              StopID: st.StopID,
+              Direction: st.Direction,
+            })),
+          },
+        });
+      }
+    } catch (err) {
+      results.push({ mode: "bus", error: String(err.message || err) });
+    }
+  }
+
+  // YouBike: also city-partitioned; station list is cached, live availability isn't.
+  if (city) {
+    try {
+      const bikeStations = await cachedTdxBasicGet(env, ctx, `/Bike/Station/City/${encodeURIComponent(city)}`, {}, STATION_LIST_CACHE_TTL);
+      const near = nearbyFromList(bikeStations, lat, lng, radius);
+      if (near.length > 0) {
+        const availability = await tdxBasicGet(env, `/Bike/Availability/City/${encodeURIComponent(city)}`, {});
+        const availByStation = new Map(availability.map((a) => [a.StationID, a]));
+        for (const { station, distance } of near) {
+          const a = availByStation.get(station.StationID);
+          results.push({
+            mode: "bike",
+            id: station.StationID,
+            name: station.StationName?.Zh_tw || station.StationName?.En,
+            lat: station.StationPosition.PositionLat,
+            lng: station.StationPosition.PositionLon,
+            distance: Math.round(distance),
+            live: a ? { availableRent: a.AvailableRentBikes, availableReturn: a.AvailableReturnBikes, serviceStatus: a.ServiceStatus } : null,
+          });
+        }
+      }
+    } catch (err) {
+      results.push({ mode: "bike", error: String(err.message || err) });
+    }
+  }
+
+  // TRA: nationwide, station list cached.
+  try {
+    const traStations = await cachedTdxBasicGet(env, ctx, "/Rail/TRA/Station", {}, STATION_LIST_CACHE_TTL);
+    const near = nearbyFromList(traStations, lat, lng, radius);
+    for (const { station, distance } of near) {
+      let live = null;
+      try {
+        const board = await tdxBasicGet(env, `/Rail/TRA/LiveBoard/Station/${station.StationID}`, { $top: "4" });
+        live = board.map((b) => ({
+          trainNo: b.TrainNo,
+          trainType: b.TrainTypeName?.Zh_tw,
+          destination: b.EndingStationName?.Zh_tw,
+          delayMinutes: b.DelayTime,
+          scheduledDeparture: b.ScheduledDepartureTime,
+        }));
+      } catch {
+        // best-effort: still return the station even if the live board call fails
+      }
+      results.push({
+        mode: "tra",
+        id: station.StationID,
+        name: station.StationName?.Zh_tw,
+        lat: station.StationPosition.PositionLat,
+        lng: station.StationPosition.PositionLon,
+        distance: Math.round(distance),
+        live,
+      });
+    }
+  } catch (err) {
+    results.push({ mode: "tra", error: String(err.message || err) });
+  }
+
+  // THSR: nationwide, station list cached; live-ish via today's timetable filtered to upcoming departures.
+  try {
+    const thsrStations = await cachedTdxBasicGet(env, ctx, "/Rail/THSR/Station", {}, STATION_LIST_CACHE_TTL);
+    const near = nearbyFromList(thsrStations, lat, lng, radius);
+    if (near.length > 0) {
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
+      const nowHM = new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Taipei", hour12: false }).slice(0, 5);
+      for (const { station, distance } of near) {
+        let live = null;
+        try {
+          const timetable = await tdxBasicGet(env, `/Rail/THSR/DailyTimetable/Station/${station.StationID}/${today}`, {});
+          live = timetable
+            .filter((t) => t.DepartureTime >= nowHM)
+            .sort((a, b) => a.DepartureTime.localeCompare(b.DepartureTime))
+            .slice(0, 4)
+            .map((t) => ({ trainNo: t.TrainNo, destination: t.EndingStationName?.Zh_tw, departure: t.DepartureTime }));
+        } catch {
+          // best-effort
+        }
+        results.push({
+          mode: "thsr",
+          id: station.StationID,
+          name: station.StationName?.Zh_tw,
+          lat: station.StationPosition.PositionLat,
+          lng: station.StationPosition.PositionLon,
+          distance: Math.round(distance),
+          live,
+        });
+      }
+    }
+  } catch (err) {
+    results.push({ mode: "thsr", error: String(err.message || err) });
+  }
+
+  // Metro: nationwide across every operator; station lists cached per system,
+  // live board only fetched for a system that actually has a nearby station.
+  for (const system of METRO_SYSTEMS) {
+    try {
+      const metroStations = await cachedTdxBasicGet(env, ctx, `/Rail/Metro/Station/${system}`, {}, STATION_LIST_CACHE_TTL);
+      const near = nearbyFromList(metroStations, lat, lng, radius);
+      if (near.length === 0) continue;
+      const board = await tdxBasicGet(env, `/Rail/Metro/LiveBoard/${system}`, {});
+      for (const { station, distance } of near) {
+        const live = board
+          .filter((b) => b.StationID === station.StationID)
+          .slice(0, 4)
+          .map((b) => ({
+            line: b.LineName?.Zh_tw,
+            headsign: b.TripHeadSign,
+            minutes: b.EstimateTime != null ? Math.round(b.EstimateTime / 60) : null,
+          }));
+        results.push({
+          mode: "metro",
+          id: station.StationID,
+          name: station.StationName?.Zh_tw,
+          lat: station.StationPosition.PositionLat,
+          lng: station.StationPosition.PositionLon,
+          distance: Math.round(distance),
+          live,
+        });
+      }
+    } catch (err) {
+      results.push({ mode: "metro", system, error: String(err.message || err) });
+    }
+  }
+
+  results.sort((a, b) => (a.distance ?? 1e9) - (b.distance ?? 1e9));
+  return jsonResponse(results);
+}
+
 // TDX's free/basic tier rate limit is tight, and endpoints like /api/network
 // fan out into several paginated upstream calls per request. Cache
 // slow-changing responses (city list, route/stop metadata) with Cloudflare's
@@ -319,13 +542,14 @@ const CACHE_TTL_SECONDS = {
 };
 
 const ROUTES = {
-  "/api/cities": handleCities,
-  "/api/search": (env, url) => handleSearch(env, url),
-  "/api/stop-eta": (env, url) => handleStopEta(env, url),
-  "/api/route-stops": (env, url) => handleRouteStops(env, url),
-  "/api/route-search": (env, url) => handleRouteSearch(env, url),
-  "/api/network": (env, url) => handleNetwork(env, url),
-  "/api/routing": (env, url) => handleRouting(env, url),
+  "/api/cities": (env, url, ctx) => handleCities(env),
+  "/api/search": (env, url, ctx) => handleSearch(env, url),
+  "/api/stop-eta": (env, url, ctx) => handleStopEta(env, url),
+  "/api/route-stops": (env, url, ctx) => handleRouteStops(env, url),
+  "/api/route-search": (env, url, ctx) => handleRouteSearch(env, url),
+  "/api/network": (env, url, ctx) => handleNetwork(env, url),
+  "/api/routing": (env, url, ctx) => handleRouting(env, url),
+  "/api/nearby": (env, url, ctx) => handleNearby(env, ctx, url),
 };
 
 export default {
@@ -354,7 +578,7 @@ export default {
     }
 
     try {
-      const response = await handler(env, url);
+      const response = await handler(env, url, ctx);
       if (ttl && response.status === 200) {
         const cacheable = new Response(response.body, response);
         cacheable.headers.set("Cache-Control", `public, max-age=${ttl}`);
