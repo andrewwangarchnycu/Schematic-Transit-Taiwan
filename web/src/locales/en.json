@@ -19,5 +19,34 @@
   "refresh": "Refresh",
   "autoRefreshHint": "Auto-refreshes every 20s",
   "backToSearch": "Back to search",
-  "languageToggle": "中文"
+  "languageToggle": "中文",
+
+  "tabStations": "Stations",
+  "tabLines": "Lines",
+  "tabNavigation": "Navigation",
+  "tabSchematic": "Schematic",
+
+  "searchRoutePlaceholder": "Search by route name",
+
+  "navOrigin": "Origin",
+  "navDestination": "Destination",
+  "navNotSet": "Not set",
+  "navPickOnMap": "Pick on map",
+  "navUseMyLocation": "Use my location",
+  "navPickingHint": "Click on the map to set the point",
+  "navPlanTrip": "Plan trip",
+  "navReset": "Reset",
+  "navNoRoutes": "No routes found",
+  "navLocationFailed": "Couldn't get your location",
+  "navMinutesUnit": "min",
+  "navTransfers": "{{count}} transfer(s)",
+  "navWalk": "Walk {{minutes}} min",
+  "navRide": "Ride {{mode}} {{name}} (toward {{headsign}}), {{stops}} stops",
+
+  "schematicCellSize": "Simplification grid size",
+  "schematicGenerate": "Generate schematic",
+  "schematicLoadingHint": "Downloading and computing the citywide network, larger cities may take a few seconds...",
+  "schematicStats": "Showing {{stations}} stations, {{routes}} route segments",
+  "schematicHint": "Click a line to highlight it; hover a station or line to see its name",
+  "schematicEmpty": "Pick a city then press \"Generate schematic\""
 }

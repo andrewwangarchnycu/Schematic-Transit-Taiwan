@@ -195,3 +195,217 @@ body {
   color: #1a8a3d;
   font-weight: 700;
 }
+
+/* Tab navigation */
+
+.tab-nav {
+  display: flex;
+  background: #16304d;
+  flex-shrink: 0;
+}
+
+.tab-nav button {
+  flex: 1;
+  padding: 0.65rem 0.5rem;
+  border: none;
+  background: none;
+  color: #b7c4d6;
+  font-size: 0.95rem;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+}
+
+.tab-nav button.active {
+  color: #fff;
+  border-bottom-color: #4da3ff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Leaflet colored pins (origin/destination) */
+
+.colored-pin span {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* Lines tab */
+
+.direction-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.6rem 0;
+}
+
+.direction-tabs button {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid #1e3a5f;
+  background: #fff;
+  color: #1e3a5f;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.direction-tabs button.active {
+  background: #1e3a5f;
+  color: #fff;
+}
+
+.route-stop-list {
+  padding-left: 1.4rem;
+  margin: 0.5rem 0;
+}
+
+.route-stop-list li {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+/* Navigation tab */
+
+.nav-point-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.nav-point-label {
+  font-weight: 600;
+  min-width: 3.5rem;
+}
+
+.nav-point-value {
+  flex: 1;
+  color: #445;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+}
+
+.nav-point-row button {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid #1e3a5f;
+  background: #fff;
+  color: #1e3a5f;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.nav-point-row button.active {
+  background: #1e3a5f;
+  color: #fff;
+}
+
+.nav-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.8rem 0;
+}
+
+.nav-actions button {
+  padding: 0.6rem 1rem;
+  border: none;
+  border-radius: 6px;
+  background: #1e3a5f;
+  color: #fff;
+  cursor: pointer;
+}
+
+.nav-actions button:disabled {
+  background: #9aa7b5;
+  cursor: not-allowed;
+}
+
+.itinerary-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.itinerary-list li {
+  border: 1px solid #eee;
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+  overflow: hidden;
+}
+
+.itinerary-list li.selected {
+  border-color: #1e3a5f;
+}
+
+.itinerary-list li button {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.7rem;
+}
+
+.itinerary-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.itinerary-time {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.itinerary-meta {
+  color: #667;
+  font-size: 0.85rem;
+}
+
+.itinerary-sections {
+  margin: 0.6rem 0 0;
+  padding-left: 1.2rem;
+  font-size: 0.9rem;
+}
+
+.itinerary-sections li {
+  border: none;
+  padding: 0.2rem 0;
+}
+
+/* Schematic tab */
+
+.cell-size-label {
+  display: block;
+  margin-bottom: 0.8rem;
+  font-size: 0.9rem;
+}
+
+.cell-size-label input[type="range"] {
+  width: 100%;
+  display: block;
+  margin-top: 0.3rem;
+}
+
+.schematic-panel {
+  background: #0d1b2a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+.schematic-placeholder {
+  color: #90a4b8;
+}
+
+.schematic-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.schematic-svg polyline {
+  cursor: pointer;
+}

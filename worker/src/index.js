@@ -17,6 +17,13 @@
  *          serving that station
  *   GET /api/route-stops?city=Taichung&routeId=1234
  *       -> ordered stop list (both directions) for that route
+ *   GET /api/route-search?city=Taichung&keyword=100
+ *       -> matching bus routes in that city
+ *   GET /api/network?city=Taichung
+ *       -> { stations: [...], routes: [...] } for the whole city, used by
+ *          the Schematic tab to compute a grid-simplified map client-side
+ *   GET /api/routing?origin=lat,lng&destination=lat,lng[&gc=&top=&transit=&...]
+ *       -> TDX MaaS multi-modal trip planning, proxied as-is
  *
  * Setup:
  *   wrangler secret put TDX_CLIENT_ID
@@ -26,6 +33,7 @@
 
 const AUTH_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token";
 const API_BASE = "https://tdx.transportdata.tw/api/basic/v2";
+const MAAS_API_BASE = "https://tdx.transportdata.tw/api/maas";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -62,16 +70,37 @@ async function getToken(env) {
   return cachedToken;
 }
 
-async function tdxGet(env, path, params) {
+async function tdxGet(env, path, params, base = API_BASE) {
   const token = await getToken(env);
-  const qs = new URLSearchParams({ ...params, $format: "JSON" });
-  const resp = await fetch(`${API_BASE}${path}?${qs.toString()}`, {
+  const qs = new URLSearchParams(params);
+  const resp = await fetch(`${base}${path}?${qs.toString()}`, {
     headers: { authorization: `Bearer ${token}` },
   });
   if (!resp.ok) {
     throw new Error(`TDX GET ${path} failed (${resp.status}): ${await resp.text()}`);
   }
   return resp.json();
+}
+
+function tdxBasicGet(env, path, params) {
+  return tdxGet(env, path, { ...params, $format: "JSON" }, API_BASE);
+}
+
+// Bus/Station and Bus/StopOfRoute cap out at 1000 rows per call regardless
+// of the requested $top, same as TDX's other list endpoints; page with
+// $skip until a short page comes back (mirrors tdx_taichung_bus_schematic.py).
+async function tdxBasicGetAllPages(env, path, params) {
+  const pageSize = 1000;
+  const results = [];
+  let skip = 0;
+  while (true) {
+    const page = await tdxBasicGet(env, path, { ...params, $top: String(pageSize), $skip: String(skip) });
+    if (!page || page.length === 0) break;
+    results.push(...page);
+    if (page.length < pageSize) break;
+    skip += pageSize;
+  }
+  return results;
 }
 
 function jsonResponse(data, status = 200) {
@@ -116,7 +145,7 @@ const CITY_EN_NAMES = {
 };
 
 async function handleCities(env) {
-  const cities = await tdxGet(env, "/Basic/City", {});
+  const cities = await tdxBasicGet(env, "/Basic/City", {});
   return jsonResponse(
     cities.map((c) => ({
       City: c.City,
@@ -136,7 +165,7 @@ async function handleSearch(env, url) {
   // server-side NullReferenceException if contains() runs on a null field,
   // so guard it with a not-null check instead of filtering on Zh_tw alone.
   const filter = `contains(StationName/Zh_tw,${kw}) or (StationName/En ne null and contains(StationName/En,${kw}))`;
-  const stations = await tdxGet(env, `/Bus/Station/City/${encodeURIComponent(city)}`, {
+  const stations = await tdxBasicGet(env, `/Bus/Station/City/${encodeURIComponent(city)}`, {
     $filter: filter,
     $top: "50",
   });
@@ -167,7 +196,7 @@ async function handleStopEta(env, url) {
   // EstimatedTimeOfArrival has no StationID field, only StopID (one row per
   // route+direction stop), so OR together every StopID a station serves.
   const filter = stopIds.map((id) => `StopID eq ${odataStringLiteral(id)}`).join(" or ");
-  const eta = await tdxGet(env, `/Bus/EstimatedTimeOfArrival/City/${encodeURIComponent(city)}`, {
+  const eta = await tdxBasicGet(env, `/Bus/EstimatedTimeOfArrival/City/${encodeURIComponent(city)}`, {
     $filter: filter,
     $top: "100",
   });
@@ -180,15 +209,127 @@ async function handleRouteStops(env, url) {
   if (!city || !routeId) {
     return jsonResponse({ error: "city and routeId query params are required" }, 400);
   }
-  const stopOfRoute = await tdxGet(env, `/Bus/StopOfRoute/City/${encodeURIComponent(city)}`, {
+  const stopOfRoute = await tdxBasicGet(env, `/Bus/StopOfRoute/City/${encodeURIComponent(city)}`, {
     $filter: `RouteID eq ${odataStringLiteral(routeId)}`,
     $top: "10",
   });
   return jsonResponse(stopOfRoute);
 }
 
+async function handleRouteSearch(env, url) {
+  const city = url.searchParams.get("city");
+  const keyword = url.searchParams.get("keyword");
+  if (!city || !keyword) {
+    return jsonResponse({ error: "city and keyword query params are required" }, 400);
+  }
+  const kw = odataStringLiteral(keyword);
+  const filter = `contains(RouteName/Zh_tw,${kw}) or (RouteName/En ne null and contains(RouteName/En,${kw}))`;
+  const routes = await tdxBasicGet(env, `/Bus/Route/City/${encodeURIComponent(city)}`, {
+    $filter: filter,
+    $top: "50",
+  });
+  return jsonResponse(
+    routes.map((r) => ({
+      RouteID: r.RouteID,
+      RouteName: r.RouteName,
+      DepartureStopNameZh: r.DepartureStopNameZh,
+      DepartureStopNameEn: r.DepartureStopNameEn,
+      DestinationStopNameZh: r.DestinationStopNameZh,
+      DestinationStopNameEn: r.DestinationStopNameEn,
+    }))
+  );
+}
+
+// Whole-city dataset for the Schematic tab, which grid-snaps and lays out
+// the network client-side (same idea as tdx_taichung_bus_schematic.py, but
+// in-browser). Trimmed hard since even a mid-size city can have thousands
+// of stations/route-stops.
+async function handleNetwork(env, url) {
+  const city = url.searchParams.get("city");
+  if (!city) {
+    return jsonResponse({ error: "city query param is required" }, 400);
+  }
+
+  const [stations, stopOfRoute] = await Promise.all([
+    tdxBasicGetAllPages(env, `/Bus/Station/City/${encodeURIComponent(city)}`, {}),
+    tdxBasicGetAllPages(env, `/Bus/StopOfRoute/City/${encodeURIComponent(city)}`, {}),
+  ]);
+
+  return jsonResponse({
+    stations: stations.map((s) => ({
+      StationID: s.StationID,
+      StationName: s.StationName,
+      StationPosition: s.StationPosition,
+    })),
+    routes: stopOfRoute.map((r) => ({
+      RouteID: r.RouteID,
+      RouteName: r.RouteName,
+      Direction: r.Direction,
+      Stops: (r.Stops || [])
+        .sort((a, b) => (a.StopSequence ?? 0) - (b.StopSequence ?? 0))
+        .map((st) => ({ StationID: st.StationID, StopSequence: st.StopSequence })),
+    })),
+  });
+}
+
+const ROUTING_PASSTHROUGH_PARAMS = [
+  "transfer_time",
+  "depart",
+  "arrival",
+  "first_mile_mode",
+  "first_mile_time",
+  "last_mile_mode",
+  "last_mile_time",
+];
+
+async function handleRouting(env, url) {
+  const origin = url.searchParams.get("origin");
+  const destination = url.searchParams.get("destination");
+  if (!origin || !destination) {
+    return jsonResponse({ error: "origin and destination query params are required (\"lat,lng\")" }, 400);
+  }
+
+  const params = {
+    origin,
+    destination,
+    gc: url.searchParams.get("gc") || "0.5",
+    top: url.searchParams.get("top") || "5",
+    transit: url.searchParams.get("transit") || "3,4,5,6,7,8,9",
+  };
+  for (const key of ROUTING_PASSTHROUGH_PARAMS) {
+    const value = url.searchParams.get(key);
+    if (value) params[key] = value;
+  }
+
+  const result = await tdxGet(env, "/routing", params, MAAS_API_BASE);
+  return jsonResponse(result);
+}
+
+// TDX's free/basic tier rate limit is tight, and endpoints like /api/network
+// fan out into several paginated upstream calls per request. Cache
+// slow-changing responses (city list, route/stop metadata) with Cloudflare's
+// Cache API so repeat visits and page reloads don't re-spend quota; leave
+// truly live data (ETAs, trip planning) uncached. Seconds.
+const CACHE_TTL_SECONDS = {
+  "/api/cities": 24 * 60 * 60,
+  "/api/search": 60 * 60,
+  "/api/route-stops": 60 * 60,
+  "/api/route-search": 60 * 60,
+  "/api/network": 6 * 60 * 60,
+};
+
+const ROUTES = {
+  "/api/cities": handleCities,
+  "/api/search": (env, url) => handleSearch(env, url),
+  "/api/stop-eta": (env, url) => handleStopEta(env, url),
+  "/api/route-stops": (env, url) => handleRouteStops(env, url),
+  "/api/route-search": (env, url) => handleRouteSearch(env, url),
+  "/api/network": (env, url) => handleNetwork(env, url),
+  "/api/routing": (env, url) => handleRouting(env, url),
+};
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
@@ -198,19 +339,29 @@ export default {
       return jsonResponse({ error: "Method not allowed" }, 405);
     }
 
+    const handler = ROUTES[url.pathname];
+    if (!handler) {
+      return jsonResponse({ error: "Not found" }, 404);
+    }
+
+    const ttl = CACHE_TTL_SECONDS[url.pathname];
+    const cache = caches.default;
+    const cacheKey = new Request(url.toString(), request);
+
+    if (ttl) {
+      const cached = await cache.match(cacheKey);
+      if (cached) return cached;
+    }
+
     try {
-      switch (url.pathname) {
-        case "/api/cities":
-          return await handleCities(env);
-        case "/api/search":
-          return await handleSearch(env, url);
-        case "/api/stop-eta":
-          return await handleStopEta(env, url);
-        case "/api/route-stops":
-          return await handleRouteStops(env, url);
-        default:
-          return jsonResponse({ error: "Not found" }, 404);
+      const response = await handler(env, url);
+      if (ttl && response.status === 200) {
+        const cacheable = new Response(response.body, response);
+        cacheable.headers.set("Cache-Control", `public, max-age=${ttl}`);
+        ctx.waitUntil(cache.put(cacheKey, cacheable.clone()));
+        return cacheable;
       }
+      return response;
     } catch (err) {
       return jsonResponse({ error: String(err && err.message ? err.message : err) }, 502);
     }

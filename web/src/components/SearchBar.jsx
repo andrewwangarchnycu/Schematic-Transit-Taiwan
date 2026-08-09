@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-export default function SearchBar({ disabled, onSearch }) {
+export default function SearchBar({ disabled, onSearch, placeholderKey = "searchPlaceholder" }) {
   const { t } = useTranslation();
   const [keyword, setKeyword] = useState("");
 
@@ -17,7 +17,7 @@ export default function SearchBar({ disabled, onSearch }) {
       <input
         type="text"
         value={keyword}
-        placeholder={t("searchPlaceholder")}
+        placeholder={t(placeholderKey)}
         disabled={disabled}
         onChange={(e) => setKeyword(e.target.value)}
       />

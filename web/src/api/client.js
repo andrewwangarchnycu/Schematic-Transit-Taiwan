@@ -25,3 +25,18 @@ export function getStopEta(city, stopIds) {
 export function getRouteStops(city, routeId) {
   return getJson("/api/route-stops", { city, routeId });
 }
+
+export function searchRoutes(city, keyword) {
+  return getJson("/api/route-search", { city, keyword });
+}
+
+export function getNetwork(city) {
+  return getJson("/api/network", { city });
+}
+
+export function planTrip(origin, destination) {
+  return getJson("/api/routing", {
+    origin: `${origin.lat},${origin.lng}`,
+    destination: `${destination.lat},${destination.lng}`,
+  });
+}

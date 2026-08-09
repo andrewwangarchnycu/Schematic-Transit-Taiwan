@@ -1,34 +1,19 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import CitySelect from "./components/CitySelect.jsx";
-import SearchBar from "./components/SearchBar.jsx";
-import StopList from "./components/StopList.jsx";
-import StopDetail from "./components/StopDetail.jsx";
+import TabNav from "./components/TabNav.jsx";
+import StationsTab from "./components/StationsTab.jsx";
+import LinesTab from "./components/LinesTab.jsx";
+import NavigationTab from "./components/NavigationTab.jsx";
+import SchematicTab from "./components/SchematicTab.jsx";
 import MapView from "./components/MapView.jsx";
 import LangToggle from "./components/LangToggle.jsx";
-import { searchStations } from "./api/client.js";
+
+const EMPTY_MAP_STATE = { markers: [], polylines: [], onMapClick: null };
 
 export default function App() {
   const { t } = useTranslation();
-  const [city, setCity] = useState("");
-  const [results, setResults] = useState([]);
-  const [selectedStation, setSelectedStation] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  function handleSearch(keyword) {
-    if (!city) {
-      setError(t("selectCity"));
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setSelectedStation(null);
-    searchStations(city, keyword)
-      .then(setResults)
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }
+  const [activeTab, setActiveTab] = useState("stations");
+  const [mapState, setMapState] = useState(EMPTY_MAP_STATE);
 
   return (
     <div className="app-shell">
@@ -37,25 +22,23 @@ export default function App() {
         <LangToggle />
       </header>
 
-      <div className="app-body">
-        <aside className="side-panel">
-          {!selectedStation && (
-            <>
-              <CitySelect value={city} onChange={setCity} />
-              <SearchBar disabled={!city} onSearch={handleSearch} />
-              {loading && <p>{t("loading")}</p>}
-              {error && <p className="error-text">{t("errorPrefix")}{error}</p>}
-              {!loading && <StopList results={results} onSelect={setSelectedStation} />}
-            </>
-          )}
-          {selectedStation && (
-            <StopDetail city={city} station={selectedStation} onBack={() => setSelectedStation(null)} />
-          )}
-        </aside>
+      <TabNav active={activeTab} onChange={setActiveTab} />
 
-        <main className="map-panel">
-          <MapView results={results} selectedStation={selectedStation} onSelect={setSelectedStation} />
-        </main>
+      <div className="app-body">
+        {activeTab === "schematic" ? (
+          <SchematicTab />
+        ) : (
+          <>
+            <aside className="side-panel">
+              {activeTab === "stations" && <StationsTab setMapState={setMapState} />}
+              {activeTab === "lines" && <LinesTab setMapState={setMapState} />}
+              {activeTab === "navigation" && <NavigationTab setMapState={setMapState} />}
+            </aside>
+            <main className="map-panel">
+              <MapView {...mapState} />
+            </main>
+          </>
+        )}
       </div>
     </div>
   );
