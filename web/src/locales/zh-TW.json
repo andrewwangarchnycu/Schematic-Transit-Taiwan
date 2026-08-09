@@ -60,5 +60,19 @@
   "mode_thsr": "高鐵",
   "mode_tra": "台鐵",
   "mode_metro": "捷運",
-  "mode_bike": "YouBike"
+  "mode_bike": "YouBike",
+
+  "locateMe": "定位目前位置",
+
+  "compass_N": "北",
+  "compass_S": "南",
+  "compass_E": "東",
+  "compass_W": "西",
+  "compass_NE": "東北",
+  "compass_NW": "西北",
+  "compass_SE": "東南",
+  "compass_SW": "西南",
+
+  "addressSearchResultsFor": "「{{query}}」附近站牌",
+  "addressNotFound": "查無符合的站名或地址"
 }

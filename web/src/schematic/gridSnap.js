@@ -92,9 +92,10 @@ export function buildSchematic({ stations, routes }, cellSizeMeters) {
     const existing = cellMerge.get(key);
     if (existing) {
       existing.names.add(stationLabel(station));
+      existing.stationIds.add(station.StationID);
       existing.routeCount = Math.max(existing.routeCount, routeCount);
     } else {
-      cellMerge.set(key, { gx, gy, names: new Set([stationLabel(station)]), routeCount });
+      cellMerge.set(key, { gx, gy, names: new Set([stationLabel(station)]), stationIds: new Set([station.StationID]), routeCount });
     }
   }
 
@@ -103,6 +104,7 @@ export function buildSchematic({ stations, routes }, cellSizeMeters) {
     gx: c.gx,
     gy: c.gy,
     name: [...c.names].slice(0, 3).join(" / "),
+    stationIds: [...c.stationIds],
     routeCount: c.routeCount,
     isInterchange: c.routeCount > 1,
   }));

@@ -5,7 +5,7 @@ import SearchBar from "./SearchBar.jsx";
 import StopList from "./StopList.jsx";
 import StopDetail from "./StopDetail.jsx";
 import NearbyCard from "./NearbyCard.jsx";
-import { searchStations, getNearby } from "../api/client.js";
+import { searchStations, getNearby, geocodeAddress } from "../api/client.js";
 
 const MODE_MARKER_COLOR = {
   bus: "#3457ea",
@@ -15,16 +15,17 @@ const MODE_MARKER_COLOR = {
   bike: "#f39c12",
 };
 
-export default function StationsTab({ setMapState }) {
+export default function StationsTab({ setMapState, onRouteClick }) {
   const { t, i18n } = useTranslation();
   const [city, setCity] = useState("");
   const [results, setResults] = useState([]);
   const [nearbyItems, setNearbyItems] = useState(null);
+  const [addressQuery, setAddressQuery] = useState(null);
   const [selectedStation, setSelectedStation] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  function handleSearch(keyword) {
+  async function handleSearch(keyword) {
     if (!city) {
       setError(t("selectCity"));
       return;
@@ -33,13 +34,42 @@ export default function StationsTab({ setMapState }) {
     setError(null);
     setSelectedStation(null);
     setNearbyItems(null);
-    searchStations(city, keyword)
-      .then(setResults)
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+    setAddressQuery(null);
+    try {
+      const found = await searchStations(city, keyword);
+      if (found.length > 0) {
+        setResults(found);
+        return;
+      }
+      // No stop-name match -- try the query as an address/landmark and
+      // show what's nearby, instead of just reporting nothing found.
+      setResults([]);
+      const geo = await geocodeAddress(keyword);
+      if (!geo) {
+        setError(t("addressNotFound"));
+        return;
+      }
+      const items = await getNearby(geo.lat, geo.lng, city);
+      setNearbyItems(items.filter((item) => !item.error));
+      setAddressQuery(keyword);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   function handleNearby() {
+    if (!city) {
+      // Bus/YouBike are city-partitioned in TDX and skipped without one,
+      // so without a city the search only checks nationwide TRA/THSR/Metro
+      // stations -- it resolves almost instantly and, most places in
+      // Taiwan, with zero results, which reads as a broken/premature
+      // "no results" rather than what it actually is (a real but narrow
+      // search). Require a city so the full search always runs.
+      setError(t("selectCity"));
+      return;
+    }
     if (!navigator.geolocation) {
       setError(t("navLocationFailed"));
       return;
@@ -48,6 +78,8 @@ export default function StationsTab({ setMapState }) {
     setError(null);
     setSelectedStation(null);
     setResults([]);
+    setNearbyItems(null);
+    setAddressQuery(null);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         getNearby(pos.coords.latitude, pos.coords.longitude, city)
@@ -113,11 +145,14 @@ export default function StationsTab({ setMapState }) {
             nearbyItems.length === 0 ? (
               <p className="hint-text">{t("nearbyEmpty")}</p>
             ) : (
-              <ul className="info-card-list">
-                {nearbyItems.map((item) => (
-                  <NearbyCard key={`${item.mode}-${item.id}`} item={item} onSelectBus={setSelectedStation} />
-                ))}
-              </ul>
+              <>
+                {addressQuery && <p className="hint-text">{t("addressSearchResultsFor", { query: addressQuery })}</p>}
+                <ul className="info-card-list">
+                  {nearbyItems.map((item) => (
+                    <NearbyCard key={`${item.mode}-${item.id}`} item={item} onSelectBus={setSelectedStation} />
+                  ))}
+                </ul>
+              </>
             )
           )}
 
@@ -125,7 +160,12 @@ export default function StationsTab({ setMapState }) {
         </>
       )}
       {selectedStation && (
-        <StopDetail city={city} station={selectedStation} onBack={() => setSelectedStation(null)} />
+        <StopDetail
+          city={city}
+          station={selectedStation}
+          onBack={() => setSelectedStation(null)}
+          onRouteClick={(routeId, routeName) => onRouteClick({ city, routeId, routeName })}
+        />
       )}
     </>
   );

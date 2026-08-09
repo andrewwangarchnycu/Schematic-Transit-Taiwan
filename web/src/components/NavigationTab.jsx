@@ -28,11 +28,7 @@ function clockOf(isoLocal) {
   return isoLocal && isoLocal.length >= 16 ? isoLocal.slice(11, 16) : "";
 }
 
-function sectionLine(section, t, i18n) {
-  if (section.type === "pedestrian") {
-    const minutes = Math.round((section.travelSummary?.duration || 0) / 60);
-    return t("navWalk", { minutes });
-  }
+function rideLabel(section, t) {
   const transport = section.transport || {};
   const name = transport.longName || transport.shortName || transport.number || transport.name || transport.mode;
   const stopCount = (section.intermediateStops || []).length + 1;
@@ -44,8 +40,37 @@ function sectionLine(section, t, i18n) {
   });
 }
 
-export default function NavigationTab({ setMapState }) {
-  const { t, i18n } = useTranslation();
+// Lines tab only knows bus routes, and MaaS route identifiers don't reliably
+// map onto the Basic API's RouteID namespace, so cross-navigation for a bus
+// leg goes by name (searched fresh in LinesTab) rather than an exact ID --
+// and only when TDX actually told us which city, since Bus/Route/City/{city}
+// requires one and there's no reliable way to infer it otherwise.
+function busRouteLinkTarget(section) {
+  const transport = section.transport || {};
+  const isBus = (transport.category || transport.mode || "").toLowerCase() === "bus";
+  if (!isBus || !transport.city) return null;
+  const keyword = transport.shortName || transport.number || transport.longName;
+  if (!keyword) return null;
+  return { city: transport.city, keyword };
+}
+
+function SectionContent({ section, t, onRouteClick }) {
+  if (section.type === "pedestrian") {
+    const minutes = Math.round((section.travelSummary?.duration || 0) / 60);
+    return t("navWalk", { minutes });
+  }
+  const label = rideLabel(section, t);
+  const linkTarget = onRouteClick ? busRouteLinkTarget(section) : null;
+  if (!linkTarget) return label;
+  return (
+    <button type="button" className="itinerary-route-link" onClick={() => onRouteClick(linkTarget)}>
+      {label}
+    </button>
+  );
+}
+
+export default function NavigationTab({ setMapState, onRouteClick }) {
+  const { t } = useTranslation();
   const [origin, setOrigin] = useState(null);
   const [destination, setDestination] = useState(null);
   const [picking, setPicking] = useState(null);
@@ -168,7 +193,7 @@ export default function NavigationTab({ setMapState }) {
       <ul className="itinerary-list">
         {routes.map((route, idx) => (
           <li key={idx} className={idx === selectedIdx ? "selected" : ""}>
-            <button type="button" onClick={() => setSelectedIdx(idx)}>
+            <button type="button" className="itinerary-summary-button" onClick={() => setSelectedIdx(idx)}>
               <div className="itinerary-summary">
                 <span className="itinerary-time">{Math.round(route.travel_time / 60)} {t("navMinutesUnit")}</span>
                 <span className="itinerary-meta">
@@ -176,14 +201,16 @@ export default function NavigationTab({ setMapState }) {
                   {route.total_price != null ? ` · $${route.total_price}` : ""}
                 </span>
               </div>
-              {idx === selectedIdx && (
-                <ol className="itinerary-sections">
-                  {route.sections.map((section, sIdx) => (
-                    <li key={sIdx}>{sectionLine(section, t, i18n)}</li>
-                  ))}
-                </ol>
-              )}
             </button>
+            {idx === selectedIdx && (
+              <ol className="itinerary-sections">
+                {route.sections.map((section, sIdx) => (
+                  <li key={sIdx}>
+                    <SectionContent section={section} t={t} onRouteClick={onRouteClick} />
+                  </li>
+                ))}
+              </ol>
+            )}
           </li>
         ))}
       </ul>

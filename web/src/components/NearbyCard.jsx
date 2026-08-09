@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { compassLabel } from "../utils/compass.js";
 
 const MODE_BADGE_CLASS = {
   bus: "mode-bus",
@@ -9,7 +10,13 @@ const MODE_BADGE_CLASS = {
 };
 
 function BusBody({ item, t }) {
-  return <div>{t("nearbyRouteCount", { count: item.routeCount })}</div>;
+  const bearing = compassLabel(item.station?.Bearing, t);
+  return (
+    <div>
+      {t("nearbyRouteCount", { count: item.routeCount })}
+      {bearing ? ` · ${bearing}` : ""}
+    </div>
+  );
 }
 
 function BikeBody({ item, t }) {

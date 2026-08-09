@@ -56,3 +56,12 @@ export function getNearby(lat, lng, city, radius = 500) {
   if (city) params.city = city;
   return getJson("/api/nearby", params);
 }
+
+export function getStationStops(city, stationId) {
+  return getJson("/api/station-stops", { city, stationId });
+}
+
+export async function geocodeAddress(query) {
+  const result = await getJson("/api/geocode", { q: query });
+  return result || null;
+}

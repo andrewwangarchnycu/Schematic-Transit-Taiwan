@@ -31,6 +31,15 @@
  *          to avoid an ETA fetch per nearby bus stop). city is required for
  *          bus/bike (both are city-partitioned in TDX); TRA/THSR/Metro are
  *          nationwide and work without it.
+ *   GET /api/station-stops?city=&stationId=
+ *       -> one station's Stops[] (StopID per route), for on-demand ETA
+ *          lookups where the caller only has a StationID (e.g. the
+ *          Schematic tab, which strips Stops from /api/network to keep
+ *          the whole-city payload small)
+ *   GET /api/geocode?q=
+ *       -> { lat, lng, displayName } | null, via OpenStreetMap Nominatim,
+ *          used as a fallback when a stop-name search comes up empty so an
+ *          address/landmark query still finds nearby stops
  *
  * Setup:
  *   wrangler secret put TDX_CLIENT_ID
@@ -209,6 +218,7 @@ async function handleSearch(env, url) {
       StationID: s.StationID,
       StationName: s.StationName,
       StationPosition: s.StationPosition,
+      Bearing: s.Bearing,
       Stops: (s.Stops || []).map((st) => ({
         RouteID: st.RouteID,
         RouteName: st.RouteName,
@@ -219,7 +229,7 @@ async function handleSearch(env, url) {
   );
 }
 
-async function handleStopEta(env, url) {
+async function handleStopEta(env, ctx, url) {
   const city = url.searchParams.get("city");
   const stopIds = (url.searchParams.get("stopIds") || "")
     .split(",")
@@ -231,11 +241,53 @@ async function handleStopEta(env, url) {
   // EstimatedTimeOfArrival has no StationID field, only StopID (one row per
   // route+direction stop), so OR together every StopID a station serves.
   const filter = stopIds.map((id) => `StopID eq ${odataStringLiteral(id)}`).join(" or ");
-  const eta = await tdxBasicGet(env, `/Bus/EstimatedTimeOfArrival/City/${encodeURIComponent(city)}`, {
-    $filter: filter,
-    $top: "100",
+  const [eta, routes] = await Promise.all([
+    tdxBasicGet(env, `/Bus/EstimatedTimeOfArrival/City/${encodeURIComponent(city)}`, { $filter: filter, $top: "100" }),
+    cachedTdxBasicGet(env, ctx, `/Bus/Route/City/${encodeURIComponent(city)}`, {}, STATION_LIST_CACHE_TTL),
+  ]);
+
+  // No per-record destination on EstimatedTimeOfArrival; attach one using
+  // the route's overall Departure/Destination pair as a direction-labeled
+  // stand-in (Direction 0 conventionally runs toward Destination, Direction
+  // 1 the reverse -- exact per LinesTab which uses the real stop sequence
+  // instead, this is a reasonable label here where only the route+direction
+  // is known).
+  const routeById = new Map(routes.map((r) => [r.RouteID, r]));
+  const enriched = eta.map((e) => {
+    const route = routeById.get(e.RouteID);
+    const destination = route ? (e.Direction === 0 ? route.DestinationStopNameZh : route.DepartureStopNameZh) : null;
+    return { ...e, destination };
   });
-  return jsonResponse(eta);
+  return jsonResponse(enriched);
+}
+
+// Used by the Schematic tab: clicking a grid node needs that one station's
+// Stops[] (StopID per route) to fetch live ETA, but /api/network strips
+// Stops entirely to keep the whole-city payload small.
+async function handleStationStops(env, url) {
+  const city = url.searchParams.get("city");
+  const stationId = url.searchParams.get("stationId");
+  if (!city || !stationId) {
+    return jsonResponse({ error: "city and stationId query params are required" }, 400);
+  }
+  const stations = await tdxBasicGet(env, `/Bus/Station/City/${encodeURIComponent(city)}`, {
+    $filter: `StationID eq ${odataStringLiteral(stationId)}`,
+    $top: "1",
+  });
+  const s = stations[0];
+  if (!s) return jsonResponse({ error: "Station not found" }, 404);
+  return jsonResponse({
+    StationID: s.StationID,
+    StationName: s.StationName,
+    StationPosition: s.StationPosition,
+    Bearing: s.Bearing,
+    Stops: (s.Stops || []).map((st) => ({
+      RouteID: st.RouteID,
+      RouteName: st.RouteName,
+      StopID: st.StopID,
+      Direction: st.Direction,
+    })),
+  });
 }
 
 async function handleRouteStops(env, url) {
@@ -330,6 +382,10 @@ async function handleRouting(env, url) {
     gc: url.searchParams.get("gc") || "0.5",
     top: url.searchParams.get("top") || "5",
     transit: url.searchParams.get("transit") || "3,4,5,6,7,8,9",
+    // Force walk-only first/last mile so the engine can't fill a gap with a
+    // taxi/drive leg; still overridable via passthrough params below.
+    first_mile_mode: "0",
+    last_mile_mode: "0",
   };
   for (const key of ROUTING_PASSTHROUGH_PARAMS) {
     const value = url.searchParams.get(key);
@@ -337,6 +393,15 @@ async function handleRouting(env, url) {
   }
 
   const result = await tdxGet(env, "/routing", params, MAAS_API_BASE);
+
+  // Defense in depth: drop any itinerary that still contains a taxi leg
+  // regardless of how it got there.
+  if (result?.data?.routes) {
+    result.data.routes = result.data.routes.filter(
+      (route) => !route.sections?.some((s) => (s.transport?.mode || "").toLowerCase() === "taxi")
+    );
+  }
+
   return jsonResponse(result);
 }
 
@@ -386,6 +451,7 @@ async function handleNearby(env, ctx, url) {
             StationID: s.StationID,
             StationName: s.StationName,
             StationPosition: s.StationPosition,
+            Bearing: s.Bearing,
             Stops: (s.Stops || []).map((st) => ({
               RouteID: st.RouteID,
               RouteName: st.RouteName,
@@ -528,6 +594,30 @@ async function handleNearby(env, ctx, url) {
   return jsonResponse(results);
 }
 
+// OpenStreetMap Nominatim: free, keyless, but requires a descriptive
+// User-Agent and modest usage per their policy. Used as a fallback when a
+// station-name search comes up empty, so an address/landmark query still
+// resolves to a point we can search /api/nearby around.
+async function handleGeocode(url) {
+  const q = url.searchParams.get("q");
+  if (!q) {
+    return jsonResponse({ error: "q query param is required" }, 400);
+  }
+  const qs = new URLSearchParams({ format: "json", countrycodes: "tw", limit: "1", q });
+  const resp = await fetch(`https://nominatim.openstreetmap.org/search?${qs.toString()}`, {
+    headers: { "User-Agent": "TaiwanTransitLive/1.0 (github.com/andrewwangarchnycu/Schematic-Transit-Taiwan)" },
+  });
+  if (!resp.ok) {
+    return jsonResponse({ error: `Geocoding failed (${resp.status})` }, 502);
+  }
+  const results = await resp.json();
+  if (!results || results.length === 0) {
+    return jsonResponse(null);
+  }
+  const r = results[0];
+  return jsonResponse({ lat: parseFloat(r.lat), lng: parseFloat(r.lon), displayName: r.display_name });
+}
+
 // TDX's free/basic tier rate limit is tight, and endpoints like /api/network
 // fan out into several paginated upstream calls per request. Cache
 // slow-changing responses (city list, route/stop metadata) with Cloudflare's
@@ -539,17 +629,21 @@ const CACHE_TTL_SECONDS = {
   "/api/route-stops": 60 * 60,
   "/api/route-search": 60 * 60,
   "/api/network": 6 * 60 * 60,
+  "/api/station-stops": 60 * 60,
+  "/api/geocode": 7 * 24 * 60 * 60,
 };
 
 const ROUTES = {
   "/api/cities": (env, url, ctx) => handleCities(env),
   "/api/search": (env, url, ctx) => handleSearch(env, url),
-  "/api/stop-eta": (env, url, ctx) => handleStopEta(env, url),
+  "/api/stop-eta": (env, url, ctx) => handleStopEta(env, ctx, url),
   "/api/route-stops": (env, url, ctx) => handleRouteStops(env, url),
   "/api/route-search": (env, url, ctx) => handleRouteSearch(env, url),
   "/api/network": (env, url, ctx) => handleNetwork(env, url),
   "/api/routing": (env, url, ctx) => handleRouting(env, url),
   "/api/nearby": (env, url, ctx) => handleNearby(env, ctx, url),
+  "/api/station-stops": (env, url, ctx) => handleStationStops(env, url),
+  "/api/geocode": (env, url, ctx) => handleGeocode(url),
 };
 
 export default {

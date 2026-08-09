@@ -60,5 +60,19 @@
   "mode_thsr": "THSR",
   "mode_tra": "TRA",
   "mode_metro": "Metro",
-  "mode_bike": "YouBike"
+  "mode_bike": "YouBike",
+
+  "locateMe": "Locate me",
+
+  "compass_N": "N",
+  "compass_S": "S",
+  "compass_E": "E",
+  "compass_W": "W",
+  "compass_NE": "NE",
+  "compass_NW": "NW",
+  "compass_SE": "SE",
+  "compass_SW": "SW",
+
+  "addressSearchResultsFor": "Stops near \"{{query}}\"",
+  "addressNotFound": "No matching stop name or address found"
 }

@@ -142,9 +142,74 @@ button, input, select {
   box-shadow: var(--shadow-sm);
 }
 
+.map-view-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 .map-view {
   width: 100%;
   height: 100%;
+}
+
+.tile-grayscale {
+  filter: grayscale(100%);
+}
+
+.locate-control {
+  position: absolute;
+  right: 12px;
+  bottom: 24px;
+  z-index: 1000;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-size: 1.2rem;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.locate-control.active {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.user-location-icon {
+  position: relative;
+}
+
+.user-location-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #4285f4;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.4);
+  transform: translate(-50%, -50%);
+}
+
+.user-heading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 16px solid rgba(66, 133, 244, 0.55);
+  transform-origin: 50% 22px;
+  margin-top: -22px;
+  margin-left: -6px;
 }
 
 @media (min-width: 900px) {
@@ -295,6 +360,19 @@ button, input, select {
   flex: 1;
 }
 
+.eta-route-link {
+  all: unset;
+  font-weight: 600;
+  flex: 1;
+  cursor: pointer;
+  color: var(--color-primary);
+  text-align: left;
+}
+
+.eta-route-link:hover {
+  text-decoration: underline;
+}
+
 .eta-direction {
   color: var(--color-text-muted);
   font-size: 0.85rem;
@@ -313,6 +391,13 @@ button, input, select {
   color: #fff;
   background: var(--color-success);
   font-weight: 700;
+}
+
+.bearing-badge {
+  margin-left: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
 }
 
 /* Leaflet colored pins (origin/destination) */
@@ -488,8 +573,8 @@ button, input, select {
 }
 
 .itinerary-sections {
-  margin: 0.6rem 0 0;
-  padding-left: 1.2rem;
+  margin: 0;
+  padding: 0 1rem 0.8rem 2.2rem;
   font-size: 0.9rem;
 }
 
@@ -497,6 +582,16 @@ button, input, select {
   border: none;
   padding: 0.2rem 0;
   background: none;
+}
+
+.itinerary-route-link {
+  all: unset;
+  cursor: pointer;
+  color: var(--color-primary);
+}
+
+.itinerary-route-link:hover {
+  text-decoration: underline;
 }
 
 /* Schematic tab */
@@ -515,24 +610,57 @@ button, input, select {
 }
 
 .schematic-panel {
+  position: relative;
   background: #0d1b2a;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .schematic-placeholder {
   color: #90a4b8;
 }
 
+.schematic-viewport {
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+  overflow: hidden;
+}
+
 .schematic-svg {
   width: 100%;
   height: 100%;
+  transform-origin: center center;
 }
 
-.schematic-svg polyline {
+.schematic-svg polyline,
+.schematic-svg circle {
   cursor: pointer;
+}
+
+.schematic-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.schematic-controls button {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 1.1rem;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
 }
 
 /* Nearby / live-info cards (Stations tab) */

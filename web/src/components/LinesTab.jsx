@@ -12,7 +12,17 @@ function localized(field, lang) {
   return lang === "zh-TW" ? field?.Zh_tw : field?.En || field?.Zh_tw;
 }
 
-export default function LinesTab({ setMapState }) {
+// The exact physical last stop for this direction's sequence -- more useful
+// than a generic "Outbound"/"Inbound" label, and unlike route-level
+// Departure/DestinationStopName (which just describes the route overall)
+// this is guaranteed correct per direction since it's the literal last stop.
+function directionDestination(directionEntry, lang) {
+  const stops = [...(directionEntry.Stops || [])].sort((a, b) => (a.StopSequence ?? 0) - (b.StopSequence ?? 0));
+  const last = stops[stops.length - 1];
+  return last ? localized(last.StopName, lang) : null;
+}
+
+export default function LinesTab({ setMapState, pendingRoute, onConsumePendingRoute }) {
   const { t, i18n } = useTranslation();
   const [city, setCity] = useState("");
   const [results, setResults] = useState([]);
@@ -53,6 +63,37 @@ export default function LinesTab({ setMapState }) {
     setSelectedRoute(null);
     setDirections([]);
   }
+
+  // Cross-tab navigation from Stations/Navigation: either an exact
+  // {city, routeId, routeName} (Stations tab, which always has the real
+  // RouteID) or a best-effort {city, keyword} (Navigation tab's MaaS data
+  // doesn't share the Basic API's RouteID namespace, so it searches by
+  // name and selects the first match instead).
+  useEffect(() => {
+    if (!pendingRoute) return;
+    if (pendingRoute.city) setCity(pendingRoute.city);
+
+    if (pendingRoute.routeId && pendingRoute.city) {
+      handleSelectRoute({
+        RouteID: pendingRoute.routeId,
+        RouteName: { Zh_tw: pendingRoute.routeName, En: pendingRoute.routeName },
+      });
+    } else if (pendingRoute.keyword && pendingRoute.city) {
+      setLoading(true);
+      setError(null);
+      searchRoutes(pendingRoute.city, pendingRoute.keyword)
+        .then((found) => {
+          setResults(found);
+          if (found.length > 0) handleSelectRoute(found[0]);
+          else setError(t("noResults"));
+        })
+        .catch((err) => setError(err.message))
+        .finally(() => setLoading(false));
+    }
+
+    onConsumePendingRoute();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRoute]);
 
   const current = directions.find((d) => d.Direction === activeDirection) || directions[0] || null;
   const stopsSorted = current
@@ -145,16 +186,19 @@ export default function LinesTab({ setMapState }) {
 
           {directions.length > 1 && (
             <div className="direction-tabs">
-              {directions.map((d) => (
-                <button
-                  key={d.Direction}
-                  type="button"
-                  className={d.Direction === activeDirection ? "active" : ""}
-                  onClick={() => setActiveDirection(d.Direction)}
-                >
-                  {d.Direction === 0 ? t("directionGo") : t("directionBack")}
-                </button>
-              ))}
+              {directions.map((d) => {
+                const dest = directionDestination(d, i18n.language);
+                return (
+                  <button
+                    key={d.Direction}
+                    type="button"
+                    className={d.Direction === activeDirection ? "active" : ""}
+                    onClick={() => setActiveDirection(d.Direction)}
+                  >
+                    {dest ? `${t("nearbyTowards")} ${dest}` : d.Direction === 0 ? t("directionGo") : t("directionBack")}
+                  </button>
+                );
+              })}
             </div>
           )}
 

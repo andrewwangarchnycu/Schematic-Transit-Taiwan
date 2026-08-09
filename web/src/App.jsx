@@ -14,6 +14,15 @@ export default function App() {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState("stations");
   const [mapState, setMapState] = useState(EMPTY_MAP_STATE);
+  // { city, routeId?, routeName?, keyword? } -- set by StopDetail/NavigationTab
+  // when the user clicks a route name, consumed once by LinesTab to jump
+  // straight to that route's detail view.
+  const [pendingRoute, setPendingRoute] = useState(null);
+
+  function navigateToRoute(payload) {
+    setPendingRoute(payload);
+    setActiveTab("lines");
+  }
 
   return (
     <div className="app-shell">
@@ -30,9 +39,11 @@ export default function App() {
         ) : (
           <>
             <aside className="side-panel">
-              {activeTab === "stations" && <StationsTab setMapState={setMapState} />}
-              {activeTab === "lines" && <LinesTab setMapState={setMapState} />}
-              {activeTab === "navigation" && <NavigationTab setMapState={setMapState} />}
+              {activeTab === "stations" && <StationsTab setMapState={setMapState} onRouteClick={navigateToRoute} />}
+              {activeTab === "lines" && (
+                <LinesTab setMapState={setMapState} pendingRoute={pendingRoute} onConsumePendingRoute={() => setPendingRoute(null)} />
+              )}
+              {activeTab === "navigation" && <NavigationTab setMapState={setMapState} onRouteClick={navigateToRoute} />}
             </aside>
             <main className="map-panel">
               <MapView {...mapState} />
