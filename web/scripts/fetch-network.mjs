@@ -16,6 +16,10 @@
 // Usage:
 //   TDX_CLIENT_ID=... TDX_CLIENT_SECRET=... node scripts/fetch-network.mjs Taichung [City...]
 //   (or export them / put them in your shell profile first)
+//
+// Join TDX city codes with "+" in a single argument to merge them into one
+// map (e.g. adjacent city+county pairs that share a bus network):
+//   node scripts/fetch-network.mjs Hsinchu+HsinchuCounty
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -87,6 +91,19 @@ function trimNetwork(stations, stopOfRoute) {
   };
 }
 
+// Merges multiple already-trimmed city datasets into one, deduping
+// stations by StationID (a station right on a city/county boundary can
+// legitimately appear in both pulls).
+function mergeNetworks(parts) {
+  const stationsById = new Map();
+  const routes = [];
+  for (const part of parts) {
+    for (const s of part.stations) stationsById.set(s.StationID, s);
+    routes.push(...part.routes);
+  }
+  return { stations: [...stationsById.values()], routes };
+}
+
 async function main() {
   const cities = process.argv.slice(2);
   if (cities.length === 0) {
@@ -113,15 +130,20 @@ async function main() {
   console.log(`Rate limit: 5 req/min -> pacing every ${REQUEST_INTERVAL_MS}ms. This will take a while for a big city.`);
   const token = await getToken(clientId, clientSecret);
 
-  for (const city of cities) {
-    console.log(`\nFetching ${city}...`);
+  for (const arg of cities) {
+    const cityCodes = arg.split("+");
+    console.log(`\nFetching ${arg}${cityCodes.length > 1 ? ` (merging ${cityCodes.join(", ")})` : ""}...`);
     try {
-      const stations = await tdxGetAllPages(token, `/Bus/Station/City/${encodeURIComponent(city)}`, "Station");
-      const stopOfRoute = await tdxGetAllPages(token, `/Bus/StopOfRoute/City/${encodeURIComponent(city)}`, "StopOfRoute");
-      const data = trimNetwork(stations, stopOfRoute);
-      await writeFile(new URL(`network-${city}.json`, `file://${OUT_DIR}/`), JSON.stringify(data));
+      const parts = [];
+      for (const city of cityCodes) {
+        const stations = await tdxGetAllPages(token, `/Bus/Station/City/${encodeURIComponent(city)}`, `${city} Station`);
+        const stopOfRoute = await tdxGetAllPages(token, `/Bus/StopOfRoute/City/${encodeURIComponent(city)}`, `${city} StopOfRoute`);
+        parts.push(trimNetwork(stations, stopOfRoute));
+      }
+      const data = cityCodes.length > 1 ? mergeNetworks(parts) : parts[0];
+      await writeFile(new URL(`network-${arg}.json`, `file://${OUT_DIR}/`), JSON.stringify(data));
       console.log(`OK -- ${data.stations.length} stations, ${data.routes.length} route segments`);
-      if (!manifest.includes(city)) manifest.push(city);
+      if (!manifest.includes(arg)) manifest.push(arg);
     } catch (err) {
       console.error(`  FAILED: ${err.message}`);
     }

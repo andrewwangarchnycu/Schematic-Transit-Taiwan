@@ -107,6 +107,7 @@ export function buildSchematic({ stations, routes }, cellSizeMeters) {
     stationIds: [...c.stationIds],
     routeCount: c.routeCount,
     isInterchange: c.routeCount > 1,
+    mode: "bus",
   }));
 
   const lines = [];
@@ -135,6 +136,68 @@ export function buildSchematic({ stations, routes }, cellSizeMeters) {
       name,
       direction: route.Direction,
       color: routeColor(name),
+      path: fullPath,
+    });
+  }
+
+  return { nodes, lines };
+}
+
+const RAIL_MODE_COLORS = { thsr: "#e53935", metro: "#2e7d32" };
+
+// Projects the nationwide rail-network.json (see
+// scripts/fetch-rail-network.mjs) into the SAME grid the bus schematic
+// already computed (same meanLat/cellSize), then keeps only what falls
+// near the bus network's bounds -- most of a nationwide TRA/THSR/Metro
+// dataset is nowhere near whichever single city's bus map is loaded.
+// TRA has no line entries (see the script for why), so it only ever
+// contributes station nodes here.
+export function buildRailOverlay(railNetwork, meanLat, cellSizeMeters, busBounds, marginCells = 15) {
+  if (!railNetwork || !busBounds || !Number.isFinite(busBounds.minX)) return { nodes: [], lines: [] };
+  const project = makeProjector(meanLat);
+  const minX = busBounds.minX - marginCells;
+  const maxX = busBounds.maxX + marginCells;
+  const minY = busBounds.minY - marginCells;
+  const maxY = busBounds.maxY + marginCells;
+
+  const grid = new Map();
+  const nodes = [];
+  for (const s of railNetwork.stations) {
+    if (!s.StationPosition) continue;
+    const [xm, ym] = project(s.StationPosition.PositionLon, s.StationPosition.PositionLat);
+    const [gx, gy] = snapToGrid(xm, ym, cellSizeMeters);
+    if (gx < minX || gx > maxX || gy < minY || gy > maxY) continue;
+    grid.set(s.StationID, [gx, gy]);
+    nodes.push({
+      key: `${s.mode}-${s.StationID}`,
+      gx,
+      gy,
+      name: s.StationName?.Zh_tw || s.StationName?.En || s.StationID,
+      mode: s.mode,
+      stationId: s.StationID,
+      lat: s.StationPosition.PositionLat,
+      lng: s.StationPosition.PositionLon,
+    });
+  }
+
+  const lines = [];
+  for (const line of railNetwork.lines || []) {
+    const pathIds = line.path.filter((id) => grid.has(id));
+    // Only draw a line when most of its real stations are actually in
+    // view -- a metro/THSR line mostly outside the loaded city would
+    // otherwise draw a stray, misleading fragment of itself.
+    if (pathIds.length < 2 || pathIds.length < line.path.length * 0.6) continue;
+    const gridSeq = pathIds.map((id) => grid.get(id));
+    const fullPath = [gridSeq[0]];
+    for (let i = 0; i < gridSeq.length - 1; i++) {
+      const segment = octilinearPath(gridSeq[i], gridSeq[i + 1]);
+      fullPath.push(...segment.slice(1));
+    }
+    lines.push({
+      key: line.key,
+      name: line.name,
+      mode: line.mode,
+      color: RAIL_MODE_COLORS[line.mode] || routeColor(line.name),
       path: fullPath,
     });
   }

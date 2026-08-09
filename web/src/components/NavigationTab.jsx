@@ -79,6 +79,11 @@ export default function NavigationTab({ setMapState, onRouteClick }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // "now" (no depart/arrival param -- TDX defaults to current time),
+  // "depart" (leave no earlier than), or "arrival" (get there by).
+  const [timeMode, setTimeMode] = useState("now");
+  const [dateTime, setDateTime] = useState("");
+
   function handleMapClick(point) {
     if (picking === "origin") setOrigin(point);
     else if (picking === "destination") setDestination(point);
@@ -99,7 +104,10 @@ export default function NavigationTab({ setMapState, onRouteClick }) {
     setError(null);
     setRoutes([]);
     setSelectedIdx(null);
-    planTrip(origin, destination)
+    // <input type="datetime-local"> gives "yyyy-mm-ddTHH:mm" with no
+    // seconds; TDX wants "yyyy-mm-ddTHH:mm:ss".
+    const timeParam = timeMode !== "now" && dateTime ? { [timeMode]: `${dateTime}:00` } : {};
+    planTrip(origin, destination, timeParam)
       .then((data) => {
         const found = data?.data?.routes || [];
         setRoutes(found);
@@ -117,6 +125,8 @@ export default function NavigationTab({ setMapState, onRouteClick }) {
     setRoutes([]);
     setSelectedIdx(null);
     setError(null);
+    setTimeMode("now");
+    setDateTime("");
   }
 
   useEffect(() => {
@@ -172,6 +182,21 @@ export default function NavigationTab({ setMapState, onRouteClick }) {
       </div>
 
       {picking && <p className="hint-text">{t("navPickingHint")}</p>}
+
+      <div className="nav-time-row">
+        <select value={timeMode} onChange={(e) => setTimeMode(e.target.value)}>
+          <option value="now">{t("navTimeNow")}</option>
+          <option value="depart">{t("navTimeDepart")}</option>
+          <option value="arrival">{t("navTimeArrival")}</option>
+        </select>
+        {timeMode !== "now" && (
+          <input
+            type="datetime-local"
+            value={dateTime}
+            onChange={(e) => setDateTime(e.target.value)}
+          />
+        )}
+      </div>
 
       <div className="nav-actions">
         <button type="button" disabled={!origin || !destination || loading} onClick={handlePlan}>

@@ -4,6 +4,7 @@ import CitySelect from "./CitySelect.jsx";
 import SearchBar from "./SearchBar.jsx";
 import { searchRoutes, getRouteStops, getStopEta } from "../api/client.js";
 import { minutesUntil, formatEstimate } from "../utils/eta.js";
+import TimetableFallback from "./TimetableFallback.jsx";
 
 const ROUTE_LINE_COLOR = "#c0392b";
 const ETA_REFRESH_MS = 20000;
@@ -215,13 +216,21 @@ export default function LinesTab({ setMapState, pendingRoute, onConsumePendingRo
             {stopsSorted.map((s, idx) => {
               const stopEta = etas.find((e) => e.StopID === s.StopID && e.Direction === activeDirection);
               const minutes = stopEta ? minutesUntil(stopEta) : null;
+              const showTimetable = !stopEta || (minutes == null && stopEta.StopStatus !== 4);
               return (
                 <li key={`${s.StopUID}-${idx}`}>
-                  <span>{localized(s.StopName, i18n.language)}</span>
-                  {stopEta && (
-                    <span className={`eta-time ${minutes != null && minutes <= 1.5 ? "eta-soon" : ""}`}>
-                      {formatEstimate(stopEta, t)}
-                    </span>
+                  <div className="route-stop-row">
+                    <span>{localized(s.StopName, i18n.language)}</span>
+                    {stopEta && (
+                      <span className={`eta-time ${minutes != null && minutes <= 1.5 ? "eta-soon" : ""}`}>
+                        {formatEstimate(stopEta, t)}
+                      </span>
+                    )}
+                  </div>
+                  {showTimetable && s.StopID && (
+                    <div className="eta-extra">
+                      <TimetableFallback city={city} routeId={selectedRoute.RouteID} stopId={s.StopID} />
+                    </div>
                   )}
                 </li>
               );

@@ -40,6 +40,13 @@
  *       -> { lat, lng, displayName } | null, via OpenStreetMap Nominatim,
  *          used as a fallback when a stop-name search comes up empty so an
  *          address/landmark query still finds nearby stops
+ *   GET /api/route-timetable?city=&routeId=&stopId=
+ *       -> that stop's full scheduled TimeTables[] for the day (via
+ *          Bus/DailyStopTimeTable), for on-demand "next scheduled
+ *          departure" when there's no live estimate (not yet departed /
+ *          last bus already gone). One TDX call per route, so this is
+ *          deliberately click-triggered rather than fetched automatically
+ *          for every route at a stop.
  *
  * Setup:
  *   wrangler secret put TDX_CLIENT_ID
@@ -254,10 +261,20 @@ async function handleStopEta(env, ctx, url) {
   // EstimatedTimeOfArrival has no StationID field, only StopID (one row per
   // route+direction stop), so OR together every StopID a station serves.
   const filter = stopIds.map((id) => `StopID eq ${odataStringLiteral(id)}`).join(" or ");
-  const [eta, routes] = await Promise.all([
-    tdxBasicGet(env, `/Bus/EstimatedTimeOfArrival/City/${encodeURIComponent(city)}`, { $filter: filter, $top: "100" }),
-    cachedTdxBasicGet(env, ctx, `/Bus/Route/City/${encodeURIComponent(city)}`, {}, STATION_LIST_CACHE_TTL),
-  ]);
+
+  // city can be "+"-joined for a schematic merged from multiple TDX city
+  // codes. There's no combined endpoint, so query every real city code and
+  // merge -- each stopId only actually exists in whichever single city
+  // issued it, the rest just return empty for it.
+  const cityCodes = city.split("+");
+  const results = await Promise.all(
+    cityCodes.map((cityCode) =>
+      Promise.all([
+        tdxBasicGet(env, `/Bus/EstimatedTimeOfArrival/City/${encodeURIComponent(cityCode)}`, { $filter: filter, $top: "100" }),
+        cachedTdxBasicGet(env, ctx, `/Bus/Route/City/${encodeURIComponent(cityCode)}`, {}, STATION_LIST_CACHE_TTL),
+      ])
+    )
+  );
 
   // No per-record destination on EstimatedTimeOfArrival; attach one using
   // the route's overall Departure/Destination pair as a direction-labeled
@@ -265,42 +282,53 @@ async function handleStopEta(env, ctx, url) {
   // 1 the reverse -- exact per LinesTab which uses the real stop sequence
   // instead, this is a reasonable label here where only the route+direction
   // is known).
-  const routeById = new Map(routes.map((r) => [r.RouteID, r]));
-  const enriched = eta.map((e) => {
-    const route = routeById.get(e.RouteID);
-    const destination = route ? (e.Direction === 0 ? route.DestinationStopNameZh : route.DepartureStopNameZh) : null;
-    return { ...e, destination };
-  });
+  const enriched = [];
+  for (const [eta, routes] of results) {
+    const routeById = new Map(routes.map((r) => [r.RouteID, r]));
+    for (const e of eta) {
+      const route = routeById.get(e.RouteID);
+      const destination = route ? (e.Direction === 0 ? route.DestinationStopNameZh : route.DepartureStopNameZh) : null;
+      enriched.push({ ...e, destination });
+    }
+  }
   return jsonResponse(enriched);
 }
 
 // Used by the Schematic tab: clicking a grid node needs that one station's
 // Stops[] (StopID per route) to fetch live ETA, but /api/network strips
 // Stops entirely to keep the whole-city payload small.
+//
+// city can be "+"-joined (e.g. "Hsinchu+HsinchuCounty") for a schematic
+// merged from multiple TDX city codes -- there's no such combined TDX
+// endpoint, so a StationID from a merged map is looked up against each
+// real city code in turn until one has it.
 async function handleStationStops(env, url) {
   const city = url.searchParams.get("city");
   const stationId = url.searchParams.get("stationId");
   if (!city || !stationId) {
     return jsonResponse({ error: "city and stationId query params are required" }, 400);
   }
-  const stations = await tdxBasicGet(env, `/Bus/Station/City/${encodeURIComponent(city)}`, {
-    $filter: `StationID eq ${odataStringLiteral(stationId)}`,
-    $top: "1",
-  });
-  const s = stations[0];
-  if (!s) return jsonResponse({ error: "Station not found" }, 404);
-  return jsonResponse({
-    StationID: s.StationID,
-    StationName: s.StationName,
-    StationPosition: s.StationPosition,
-    Bearing: s.Bearing,
-    Stops: (s.Stops || []).map((st) => ({
-      RouteID: st.RouteID,
-      RouteName: st.RouteName,
-      StopID: st.StopID,
-      Direction: st.Direction,
-    })),
-  });
+  for (const cityCode of city.split("+")) {
+    const stations = await tdxBasicGet(env, `/Bus/Station/City/${encodeURIComponent(cityCode)}`, {
+      $filter: `StationID eq ${odataStringLiteral(stationId)}`,
+      $top: "1",
+    });
+    const s = stations[0];
+    if (!s) continue;
+    return jsonResponse({
+      StationID: s.StationID,
+      StationName: s.StationName,
+      StationPosition: s.StationPosition,
+      Bearing: s.Bearing,
+      Stops: (s.Stops || []).map((st) => ({
+        RouteID: st.RouteID,
+        RouteName: st.RouteName,
+        StopID: st.StopID,
+        Direction: st.Direction,
+      })),
+    });
+  }
+  return jsonResponse({ error: "Station not found" }, 404);
 }
 
 async function handleRouteStops(env, url) {
@@ -314,6 +342,37 @@ async function handleRouteStops(env, url) {
     $top: "10",
   });
   return jsonResponse(stopOfRoute);
+}
+
+// Bus/DailyStopTimeTable has no per-stop filter (only top-level fields like
+// RouteID), so it returns the whole route's schedule -- every stop, each
+// with its own full-day TimeTables[] -- and we pick out the one stop the
+// caller asked about.
+async function handleRouteTimetable(env, url) {
+  const city = url.searchParams.get("city");
+  const routeId = url.searchParams.get("routeId");
+  const stopId = url.searchParams.get("stopId");
+  if (!city || !routeId || !stopId) {
+    return jsonResponse({ error: "city, routeId, and stopId query params are required" }, 400);
+  }
+  for (const cityCode of city.split("+")) {
+    const rows = await tdxBasicGet(env, `/Bus/DailyStopTimeTable/City/${encodeURIComponent(cityCode)}`, {
+      $filter: `RouteID eq ${odataStringLiteral(routeId)}`,
+      $top: "10",
+    });
+    for (const row of rows) {
+      const stop = (row.Stops || []).find((s) => s.StopID === stopId);
+      if (stop) {
+        return jsonResponse({
+          RouteName: row.RouteName,
+          DestinationStopName: row.DestinationStopName,
+          StopName: stop.StopName,
+          TimeTables: stop.TimeTables || [],
+        });
+      }
+    }
+  }
+  return jsonResponse({ error: "No timetable found for that stop on this route" }, 404);
 }
 
 async function handleRouteSearch(env, url) {
@@ -650,6 +709,7 @@ const CACHE_TTL_SECONDS = {
   "/api/network": 6 * 60 * 60,
   "/api/station-stops": 60 * 60,
   "/api/geocode": 7 * 24 * 60 * 60,
+  "/api/route-timetable": 60 * 60,
 };
 
 const ROUTES = {
@@ -663,6 +723,7 @@ const ROUTES = {
   "/api/nearby": (env, url, ctx) => handleNearby(env, ctx, url),
   "/api/station-stops": (env, url, ctx) => handleStationStops(env, url),
   "/api/geocode": (env, url, ctx) => handleGeocode(url),
+  "/api/route-timetable": (env, url, ctx) => handleRouteTimetable(env, url),
 };
 
 export default {

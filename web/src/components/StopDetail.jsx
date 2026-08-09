@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { getStopEta } from "../api/client.js";
 import { minutesUntil, formatEstimate } from "../utils/eta.js";
 import { compassLabel } from "../utils/compass.js";
+import TimetableFallback from "./TimetableFallback.jsx";
 
 const REFRESH_MS = 20000;
 
@@ -83,18 +84,25 @@ export default function StopDetail({ city, station, onBack, onRouteClick }) {
               ? t("directionGo")
               : t("directionBack");
           return (
-            <li key={`${item.RouteID}-${item.Direction}-${idx}`} className="eta-row">
-              {onRouteClick ? (
-                <button type="button" className="eta-route eta-route-link" onClick={() => onRouteClick(item.RouteID, routeName)}>
-                  {routeName}
-                </button>
-              ) : (
-                <span className="eta-route">{routeName}</span>
+            <li key={`${item.RouteID}-${item.Direction}-${idx}`}>
+              <div className="eta-row">
+                {onRouteClick ? (
+                  <button type="button" className="eta-route eta-route-link" onClick={() => onRouteClick(item.RouteID, routeName)}>
+                    {routeName}
+                  </button>
+                ) : (
+                  <span className="eta-route">{routeName}</span>
+                )}
+                <span className="eta-direction">{directionLabel}</span>
+                <span className={`eta-time ${minutes != null && minutes <= 1.5 ? "eta-soon" : ""}`}>
+                  {formatEstimate(item, t)}
+                </span>
+              </div>
+              {minutes == null && item.StopStatus !== 4 && (
+                <div className="eta-extra">
+                  <TimetableFallback city={city} routeId={item.RouteID} stopId={item.StopID} />
+                </div>
               )}
-              <span className="eta-direction">{directionLabel}</span>
-              <span className={`eta-time ${minutes != null && minutes <= 1.5 ? "eta-soon" : ""}`}>
-                {formatEstimate(item, t)}
-              </span>
             </li>
           );
         })}

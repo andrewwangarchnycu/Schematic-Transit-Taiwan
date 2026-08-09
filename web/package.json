@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "fetch-network": "node scripts/fetch-network.mjs"
+    "fetch-network": "node scripts/fetch-network.mjs",
+    "fetch-rail-network": "node scripts/fetch-rail-network.mjs"
   },
   "dependencies": {
     "i18next": "^23.15.1",

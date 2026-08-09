@@ -58,11 +58,23 @@ export async function getStaticNetwork(city) {
   return resp.json();
 }
 
-export function planTrip(origin, destination) {
-  return getJson("/api/routing", {
+// Nationwide TRA/THSR/Metro overlay (scripts/fetch-rail-network.mjs).
+// Optional -- if it hasn't been generated yet, the Schematic tab just
+// shows the bus network without it.
+export async function getRailNetwork() {
+  const resp = await fetch(`${import.meta.env.BASE_URL}data/rail-network.json`);
+  if (!resp.ok) return null;
+  return resp.json();
+}
+
+export function planTrip(origin, destination, { depart, arrival } = {}) {
+  const params = {
     origin: `${origin.lat},${origin.lng}`,
     destination: `${destination.lat},${destination.lng}`,
-  });
+  };
+  if (depart) params.depart = depart;
+  if (arrival) params.arrival = arrival;
+  return getJson("/api/routing", params);
 }
 
 export function getNearby(lat, lng, city, radius = 500) {
@@ -78,4 +90,8 @@ export function getStationStops(city, stationId) {
 export async function geocodeAddress(query) {
   const result = await getJson("/api/geocode", { q: query });
   return result || null;
+}
+
+export function getRouteTimetable(city, routeId, stopId) {
+  return getJson("/api/route-timetable", { city, routeId, stopId });
 }
