@@ -18,8 +18,8 @@ export function searchStations(city, keyword) {
   return getJson("/api/search", { city, keyword });
 }
 
-export function getStopEta(city, stationId) {
-  return getJson("/api/stop-eta", { city, stationId });
+export function getStopEta(city, stopIds) {
+  return getJson("/api/stop-eta", { city, stopIds: stopIds.join(",") });
 }
 
 export function getRouteStops(city, routeId) {

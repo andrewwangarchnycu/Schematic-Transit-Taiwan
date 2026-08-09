@@ -86,9 +86,43 @@ function odataStringLiteral(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+// TDX's Basic/City endpoint returns CityName as a plain (Chinese) string,
+// unlike Bus/Station etc. which nest {Zh_tw, En}. Taiwan's 22 first-level
+// divisions are administratively stable, so a static English lookup here
+// is safe and avoids a second TDX call just to localize city labels.
+const CITY_EN_NAMES = {
+  Keelung: "Keelung City",
+  Taipei: "Taipei City",
+  NewTaipei: "New Taipei City",
+  Taoyuan: "Taoyuan City",
+  Hsinchu: "Hsinchu City",
+  HsinchuCounty: "Hsinchu County",
+  MiaoliCounty: "Miaoli County",
+  Taichung: "Taichung City",
+  ChanghuaCounty: "Changhua County",
+  NantouCounty: "Nantou County",
+  YunlinCounty: "Yunlin County",
+  Chiayi: "Chiayi City",
+  ChiayiCounty: "Chiayi County",
+  Tainan: "Tainan City",
+  Kaohsiung: "Kaohsiung City",
+  PingtungCounty: "Pingtung County",
+  YilanCounty: "Yilan County",
+  HualienCounty: "Hualien County",
+  TaitungCounty: "Taitung County",
+  PenghuCounty: "Penghu County",
+  KinmenCounty: "Kinmen County",
+  LienchiangCounty: "Lienchiang County",
+};
+
 async function handleCities(env) {
   const cities = await tdxGet(env, "/Basic/City", {});
-  return jsonResponse(cities.map((c) => ({ City: c.City, CityName: c.CityName })));
+  return jsonResponse(
+    cities.map((c) => ({
+      City: c.City,
+      CityName: { Zh_tw: c.CityName, En: CITY_EN_NAMES[c.City] || c.City },
+    }))
+  );
 }
 
 async function handleSearch(env, url) {
@@ -98,7 +132,10 @@ async function handleSearch(env, url) {
     return jsonResponse({ error: "city and keyword query params are required" }, 400);
   }
   const kw = odataStringLiteral(keyword);
-  const filter = `contains(StationName/Zh_tw,${kw}) or contains(StationName/En,${kw})`;
+  // StationName/En is null for many stations; TDX's OData layer throws a
+  // server-side NullReferenceException if contains() runs on a null field,
+  // so guard it with a not-null check instead of filtering on Zh_tw alone.
+  const filter = `contains(StationName/Zh_tw,${kw}) or (StationName/En ne null and contains(StationName/En,${kw}))`;
   const stations = await tdxGet(env, `/Bus/Station/City/${encodeURIComponent(city)}`, {
     $filter: filter,
     $top: "50",
@@ -120,12 +157,18 @@ async function handleSearch(env, url) {
 
 async function handleStopEta(env, url) {
   const city = url.searchParams.get("city");
-  const stationId = url.searchParams.get("stationId");
-  if (!city || !stationId) {
-    return jsonResponse({ error: "city and stationId query params are required" }, 400);
+  const stopIds = (url.searchParams.get("stopIds") || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!city || stopIds.length === 0) {
+    return jsonResponse({ error: "city and stopIds (comma-separated) query params are required" }, 400);
   }
+  // EstimatedTimeOfArrival has no StationID field, only StopID (one row per
+  // route+direction stop), so OR together every StopID a station serves.
+  const filter = stopIds.map((id) => `StopID eq ${odataStringLiteral(id)}`).join(" or ");
   const eta = await tdxGet(env, `/Bus/EstimatedTimeOfArrival/City/${encodeURIComponent(city)}`, {
-    $filter: `StationID eq ${odataStringLiteral(stationId)}`,
+    $filter: filter,
     $top: "100",
   });
   return jsonResponse(eta);
