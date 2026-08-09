@@ -2,7 +2,10 @@
 // VITE_API_BASE isn't set, so this dev-only fallback can never end up in a
 // deployed bundle -- it only exists to make `npm run dev` work with zero
 // config when the local Worker is running on its default port.
-const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.DEV ? "http://localhost:8787" : "");
+// Strip any trailing slash -- a value like "https://x.workers.dev/" would
+// otherwise produce double-slash paths ("...dev//api/cities") that don't
+// match the Worker's exact-string route table.
+const API_BASE = (import.meta.env.VITE_API_BASE || (import.meta.env.DEV ? "http://localhost:8787" : "")).replace(/\/+$/, "");
 
 async function getJson(path, params) {
   if (!API_BASE) {
