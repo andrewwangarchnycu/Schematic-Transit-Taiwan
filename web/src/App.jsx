@@ -7,6 +7,7 @@ import NavigationTab from "./components/NavigationTab.jsx";
 import SchematicTab from "./components/SchematicTab.jsx";
 import MapView from "./components/MapView.jsx";
 import LangToggle from "./components/LangToggle.jsx";
+import SplitPanel from "./components/SplitPanel.jsx";
 
 const EMPTY_MAP_STATE = { markers: [], polylines: [], onMapClick: null };
 
@@ -37,18 +38,18 @@ export default function App() {
         {activeTab === "schematic" ? (
           <SchematicTab />
         ) : (
-          <>
-            <aside className="side-panel">
-              {activeTab === "stations" && <StationsTab setMapState={setMapState} onRouteClick={navigateToRoute} />}
-              {activeTab === "lines" && (
-                <LinesTab setMapState={setMapState} pendingRoute={pendingRoute} onConsumePendingRoute={() => setPendingRoute(null)} />
-              )}
-              {activeTab === "navigation" && <NavigationTab setMapState={setMapState} onRouteClick={navigateToRoute} />}
-            </aside>
-            <main className="map-panel">
-              <MapView {...mapState} />
-            </main>
-          </>
+          <SplitPanel
+            side={
+              <>
+                {activeTab === "stations" && <StationsTab setMapState={setMapState} onRouteClick={navigateToRoute} />}
+                {activeTab === "lines" && (
+                  <LinesTab setMapState={setMapState} pendingRoute={pendingRoute} onConsumePendingRoute={() => setPendingRoute(null)} />
+                )}
+                {activeTab === "navigation" && <NavigationTab setMapState={setMapState} onRouteClick={navigateToRoute} />}
+              </>
+            }
+            main={<MapView {...mapState} />}
+          />
         )}
       </div>
     </div>

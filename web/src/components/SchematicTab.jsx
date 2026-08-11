@@ -5,6 +5,7 @@ import { buildSchematic, buildRailOverlay, computeGridBounds, makeProjector } fr
 import { minutesUntil, formatEstimate } from "../utils/eta.js";
 import TimetableFallback from "./TimetableFallback.jsx";
 import NearbyCard from "./NearbyCard.jsx";
+import SplitPanel from "./SplitPanel.jsx";
 
 const RAIL_MODE_MARKER = {
   tra: { r: 4, fill: "#8e24aa", shape: "square" },
@@ -325,8 +326,11 @@ export default function SchematicTab() {
   const showFullscreen = isFullscreen || pseudoFullscreen;
 
   return (
-    <>
-      <aside className="side-panel">
+    <SplitPanel
+      mainClassName={`schematic-panel ${pseudoFullscreen ? "pseudo-fullscreen" : ""}`}
+      mainRef={panelRef}
+      side={
+        <>
         <select className="city-select" value={city} onChange={(e) => setCity(e.target.value)}>
           <option value="">{t("selectCity")}</option>
           {manifest.map((code) => (
@@ -416,9 +420,10 @@ export default function SchematicTab() {
             )}
           </div>
         )}
-      </aside>
-
-      <main className={`map-panel schematic-panel ${pseudoFullscreen ? "pseudo-fullscreen" : ""}`} ref={panelRef}>
+        </>
+      }
+      main={
+        <>
         {schematic.lines.length === 0 && !loading ? (
           <p className="hint-text schematic-placeholder">{t("schematicEmpty")}</p>
         ) : (
@@ -572,7 +577,8 @@ export default function SchematicTab() {
             <button type="button" onClick={toggleFullscreen}>{showFullscreen ? "⤓" : "⤢"}</button>
           </div>
         )}
-      </main>
-    </>
+        </>
+      }
+    />
   );
 }

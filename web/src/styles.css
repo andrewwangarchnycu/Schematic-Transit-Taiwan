@@ -119,10 +119,18 @@ button, input, select {
 .app-body {
   flex: 1;
   display: flex;
-  flex-direction: column;
   min-height: 0;
   gap: 0.75rem;
   padding: 0.75rem;
+}
+
+.split-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  gap: 0.5rem;
 }
 
 .side-panel {
@@ -131,15 +139,31 @@ button, input, select {
   background: var(--color-surface);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  flex: 0 0 45%;
+  flex: 0 0 auto;
+  min-height: 120px;
 }
 
 .map-panel {
   flex: 1;
-  min-height: 260px;
+  min-height: 200px;
   border-radius: var(--radius-lg);
   overflow: hidden;
   box-shadow: var(--shadow-sm);
+}
+
+.split-handle {
+  flex: 0 0 auto;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-border);
+  cursor: row-resize;
+  touch-action: none;
+  transition: background var(--transition);
+}
+
+.split-handle:hover,
+.split-handle:active {
+  background: var(--color-primary);
 }
 
 .map-view-wrapper {
@@ -213,14 +237,17 @@ button, input, select {
 }
 
 @media (min-width: 900px) {
-  .app-body {
+  .split-container {
     flex-direction: row;
   }
   .side-panel {
-    flex: 0 0 380px;
+    min-height: 0;
+    min-width: 220px;
   }
-  .map-panel {
-    flex: 1;
+  .split-handle {
+    width: 10px;
+    height: auto;
+    cursor: col-resize;
   }
 }
 
