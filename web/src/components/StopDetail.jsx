@@ -4,6 +4,7 @@ import { getStopEta } from "../api/client.js";
 import { minutesUntil, formatEstimate } from "../utils/eta.js";
 import { compassLabel } from "../utils/compass.js";
 import TimetableFallback from "./TimetableFallback.jsx";
+import DepartureChips from "./DepartureChips.jsx";
 
 const REFRESH_MS = 20000;
 
@@ -12,6 +13,7 @@ export default function StopDetail({ city, station, onBack, onRouteClick }) {
   const [etas, setEtas] = useState([]);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [expandedKey, setExpandedKey] = useState(null);
 
   const stopIds = useMemo(
     () => [...new Set((station.Stops || []).map((s) => s.StopID).filter(Boolean))],
@@ -83,11 +85,23 @@ export default function StopDetail({ city, station, onBack, onRouteClick }) {
             : item.Direction === 0
               ? t("directionGo")
               : t("directionBack");
+          const key = `${item.RouteID}-${item.Direction}-${idx}`;
+          const expandable = minutes != null;
           return (
-            <li key={`${item.RouteID}-${item.Direction}-${idx}`}>
-              <div className="eta-row">
+            <li key={key}>
+              <div
+                className={`eta-row ${expandable ? "eta-row-expandable" : ""}`}
+                onClick={expandable ? () => setExpandedKey((prev) => (prev === key ? null : key)) : undefined}
+              >
                 {onRouteClick ? (
-                  <button type="button" className="eta-route eta-route-link" onClick={() => onRouteClick(item.RouteID, routeName)}>
+                  <button
+                    type="button"
+                    className="eta-route eta-route-link"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRouteClick(item.RouteID, routeName);
+                    }}
+                  >
                     {routeName}
                   </button>
                 ) : (
@@ -98,6 +112,7 @@ export default function StopDetail({ city, station, onBack, onRouteClick }) {
                   {formatEstimate(item, t)}
                 </span>
               </div>
+              {expandedKey === key && <DepartureChips item={item} />}
               {minutes == null && item.StopStatus !== 4 && (
                 <div className="eta-extra">
                   <TimetableFallback city={city} routeId={item.RouteID} stopId={item.StopID} />

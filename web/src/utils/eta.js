@@ -27,3 +27,24 @@ export function formatEstimate(item, t) {
   if (minutes <= 1.5) return t("estimateArriving");
   return t("estimateMinutes", { minutes: Math.round(minutes) });
 }
+
+// TDX nests multiple GPS-tracked buses queued at the same stop+route under
+// Estimates[] (top-level EstimateTime/PlateNumb just mirror the soonest
+// one) -- real multi-bus data, used for an Apple-Maps-style "Upcoming
+// Departures" chip row instead of synthesizing fake future times.
+export function upcomingDepartures(item) {
+  if (Array.isArray(item.Estimates) && item.Estimates.length > 0) {
+    return item.Estimates.map((e) => ({
+      minutes: e.EstimateTime != null ? e.EstimateTime / 60 : null,
+      isLast: !!e.IsLastBus,
+    }));
+  }
+  const minutes = minutesUntil(item);
+  return minutes != null ? [{ minutes, isLast: false }] : [];
+}
+
+export function formatChipMinutes(minutes, t) {
+  if (minutes == null) return t("estimateNoInfo");
+  if (minutes <= 1.5) return t("estimateArriving");
+  return t("estimateMinutes", { minutes: Math.round(minutes) });
+}

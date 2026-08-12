@@ -217,10 +217,18 @@ export default function LinesTab({ setMapState, pendingRoute, onConsumePendingRo
               const stopEta = etas.find((e) => e.StopID === s.StopID && e.Direction === activeDirection);
               const minutes = stopEta ? minutesUntil(stopEta) : null;
               const showTimetable = !stopEta || (minutes == null && stopEta.StopStatus !== 4);
+              // StopStatus 3 = last bus already left this stop today -- a real
+              // TDX signal, so it's safe to dim as a "passed" stop (unlike a
+              // live vehicle position, which TDX doesn't give us).
+              const isPast = stopEta?.StopStatus === 3;
+              const isTracked = minutes != null;
               return (
-                <li key={`${s.StopUID}-${idx}`}>
+                <li key={`${s.StopUID}-${idx}`} className={isPast ? "route-stop-past" : ""}>
                   <div className="route-stop-row">
-                    <span>{localized(s.StopName, i18n.language)}</span>
+                    <span className="route-stop-marker">
+                      <span className={`route-stop-dot ${isTracked ? "route-stop-dot-active" : ""}`} />
+                    </span>
+                    <span className="route-stop-name">{localized(s.StopName, i18n.language)}</span>
                     {stopEta && (
                       <span className={`eta-time ${minutes != null && minutes <= 1.5 ? "eta-soon" : ""}`}>
                         {formatEstimate(stopEta, t)}
