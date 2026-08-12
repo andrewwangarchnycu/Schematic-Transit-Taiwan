@@ -25,6 +25,7 @@ export default function CitySelect({ value, onChange }) {
       aria-label={t("selectCity")}
     >
       <option value="">{t("selectCity")}</option>
+      <option value="InterCity">{t("cityInterCity")}</option>
       {cities.map((c) => (
         <option key={c.City} value={c.City}>
           {i18n.language === "zh-TW" ? c.CityName?.Zh_tw : c.CityName?.En || c.City}

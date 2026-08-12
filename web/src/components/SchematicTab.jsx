@@ -254,9 +254,21 @@ export default function SchematicTab() {
   const busBounds = useMemo(() => computeGridBounds(schematic.nodes, schematic.lines), [schematic]);
 
   const railOverlay = useMemo(() => {
-    if (!railNetwork || meanLat == null) return { nodes: [], lines: [] };
+    if (!railNetwork || meanLat == null) return { nodes: [], lines: [], interchanges: [] };
     return buildRailOverlay(railNetwork, meanLat, cellSize, busBounds, 15);
   }, [railNetwork, meanLat, cellSize, busBounds]);
+
+  // Legend: one row per distinct rail line color actually on screen, plus a
+  // fixed TRA row (TRA never gets a line, only station markers -- see
+  // buildRailOverlay) when any TRA station is showing.
+  const legendLines = useMemo(() => {
+    const seen = new Map();
+    for (const line of railOverlay.lines) {
+      if (!seen.has(line.color)) seen.set(line.color, line.name);
+    }
+    return [...seen.entries()].map(([color, name]) => ({ color, name }));
+  }, [railOverlay.lines]);
+  const hasTraNodes = railOverlay.nodes.some((n) => n.mode === "tra");
 
   const bounds = useMemo(() => {
     const b = { ...busBounds };
@@ -378,6 +390,28 @@ export default function SchematicTab() {
           </p>
         )}
         <p className="hint-text">{t("schematicHint")}</p>
+
+        {(legendLines.length > 0 || hasTraNodes) && (
+          <div className="schematic-legend">
+            <h3>{t("schematicLegendTitle")}</h3>
+            {legendLines.map((l) => (
+              <div key={l.color} className="schematic-legend-row">
+                <span className="schematic-legend-swatch" style={{ background: l.color }} />
+                <span>{l.name}</span>
+              </div>
+            ))}
+            {hasTraNodes && (
+              <div className="schematic-legend-row">
+                <span className="schematic-legend-swatch schematic-legend-swatch-square" style={{ background: RAIL_MODE_MARKER.tra.fill }} />
+                <span>{t("mode_tra")}</span>
+              </div>
+            )}
+            <div className="schematic-legend-row">
+              <span className="schematic-legend-swatch schematic-legend-swatch-ring" />
+              <span>{t("schematicLegendInterchange")}</span>
+            </div>
+          </div>
+        )}
 
         {selectedNode && selectedNode.mode === "bus" && (
           <div className="stop-detail">
@@ -509,6 +543,22 @@ export default function SchematicTab() {
                     if (dragMoved.current) return;
                     selectNode(node);
                   }}
+                />
+              ))}
+              {/* Interchange rings: a colocated TRA/THSR/Metro complex or a
+                  multi-line metro station is several separate StationIDs at
+                  the same grid cell -- draw one shared ring behind them so
+                  it reads as one interchange instead of silently stacked icons. */}
+              {railOverlay.interchanges.map((ic) => (
+                <circle
+                  key={ic.key}
+                  cx={toSvgX(ic.gx)}
+                  cy={toSvgY(ic.gy)}
+                  r={10}
+                  fill="none"
+                  stroke="#1a1a1a"
+                  strokeWidth={2}
+                  style={{ pointerEvents: "none" }}
                 />
               ))}
               {railOverlay.nodes.map((node) => {

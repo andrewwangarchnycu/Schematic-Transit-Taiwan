@@ -11,7 +11,11 @@
  *   GET /api/cities
  *       -> [{ CityName: {Zh_tw, En}, City: "Taichung" }, ...]
  *   GET /api/search?city=Taichung&keyword=Taichung
- *       -> matching bus stations in that city
+ *       -> matching bus stations in that city. city also accepts the
+ *          pseudo-value "InterCity" for nationwide intercity/highway coach
+ *          routes (國道/公路客運), which TDX partitions separately from
+ *          city buses (see busPath()) -- every city-bus endpoint below
+ *          accepts it the same way.
  *   GET /api/stop-eta?city=Taichung&stationId=TCH1234
  *       -> live estimated-time-of-arrival entries for every route/direction
  *          serving that station
@@ -47,12 +51,29 @@
  *          last bus already gone). One TDX call per route, so this is
  *          deliberately click-triggered rather than fetched automatically
  *          for every route at a stop.
+ *   GET /api/push-vapid-key
+ *       -> { publicKey } for PushManager.subscribe() (see web/src/utils/push.js)
+ *   POST /api/push-watch   { subscription, watch: {city, stopId, routeId, direction, label, thresholdMinutes} }
+ *       -> upserts one arrival watch for that push subscription, stored in
+ *          the PUSH_SUBS KV namespace; returns the subscription's full watch list
+ *   POST /api/push-unwatch { endpoint, watchId }
+ *       -> removes one watch (deletes the KV record entirely once its last
+ *          watch is gone)
+ *
+ * scheduled() (Cron Trigger, see wrangler.toml): every few minutes, checks
+ * every stored watch's live ETA and sends a Web Push when a bus crosses its
+ * threshold -- this is what makes a notification arrive even when the app
+ * isn't open. See runPushCheck() for the TDX-call-batching/rate-limit notes.
  *
  * Setup:
  *   wrangler secret put TDX_CLIENT_ID
  *   wrangler secret put TDX_CLIENT_SECRET
+ *   wrangler secret put VAPID_PRIVATE_KEY
+ *   wrangler kv namespace create PUSH_SUBS   (then add the binding to wrangler.toml)
  *   wrangler deploy
  */
+
+import { buildPushPayload } from "@block65/webcrypto-web-push";
 
 const AUTH_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token";
 const API_BASE = "https://tdx.transportdata.tw/api/basic/v2";
@@ -60,7 +81,7 @@ const MAAS_API_BASE = "https://tdx.transportdata.tw/api/maas";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
@@ -179,6 +200,18 @@ function odataStringLiteral(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+// TDX's Bus data types (Station, Route, StopOfRoute, EstimatedTimeOfArrival,
+// DailyStopTimeTable, ...) are each queryable under one of several
+// partitions. City buses live under City/{City}; intercity/highway coach
+// routes (國道/公路客運, e.g. 國光客運, 統聯) span the whole country and
+// live under the separate InterCity partition instead -- no {City} segment
+// at all. The frontend's city picker offers "InterCity" as a pseudo-city
+// value (see CitySelect.jsx) that every handler below routes here rather
+// than treating as a real TDX city code.
+function busPath(dataType, city) {
+  return city === "InterCity" ? `/Bus/${dataType}/InterCity` : `/Bus/${dataType}/City/${encodeURIComponent(city)}`;
+}
+
 // TDX's Basic/City endpoint returns CityName as a plain (Chinese) string,
 // unlike Bus/Station etc. which nest {Zh_tw, En}. Taiwan's 22 first-level
 // divisions are administratively stable, so a static English lookup here
@@ -229,7 +262,7 @@ async function handleSearch(env, url) {
   // server-side NullReferenceException if contains() runs on a null field,
   // so guard it with a not-null check instead of filtering on Zh_tw alone.
   const filter = `contains(StationName/Zh_tw,${kw}) or (StationName/En ne null and contains(StationName/En,${kw}))`;
-  const stations = await tdxBasicGet(env, `/Bus/Station/City/${encodeURIComponent(city)}`, {
+  const stations = await tdxBasicGet(env, busPath("Station", city), {
     $filter: filter,
     $top: "50",
   });
@@ -270,8 +303,8 @@ async function handleStopEta(env, ctx, url) {
   const results = await Promise.all(
     cityCodes.map((cityCode) =>
       Promise.all([
-        tdxBasicGet(env, `/Bus/EstimatedTimeOfArrival/City/${encodeURIComponent(cityCode)}`, { $filter: filter, $top: "100" }),
-        cachedTdxBasicGet(env, ctx, `/Bus/Route/City/${encodeURIComponent(cityCode)}`, {}, STATION_LIST_CACHE_TTL),
+        tdxBasicGet(env, busPath("EstimatedTimeOfArrival", cityCode), { $filter: filter, $top: "100" }),
+        cachedTdxBasicGet(env, ctx, busPath("Route", cityCode), {}, STATION_LIST_CACHE_TTL),
       ])
     )
   );
@@ -309,7 +342,7 @@ async function handleStationStops(env, url) {
     return jsonResponse({ error: "city and stationId query params are required" }, 400);
   }
   for (const cityCode of city.split("+")) {
-    const stations = await tdxBasicGet(env, `/Bus/Station/City/${encodeURIComponent(cityCode)}`, {
+    const stations = await tdxBasicGet(env, busPath("Station", cityCode), {
       $filter: `StationID eq ${odataStringLiteral(stationId)}`,
       $top: "1",
     });
@@ -337,7 +370,7 @@ async function handleRouteStops(env, url) {
   if (!city || !routeId) {
     return jsonResponse({ error: "city and routeId query params are required" }, 400);
   }
-  const stopOfRoute = await tdxBasicGet(env, `/Bus/StopOfRoute/City/${encodeURIComponent(city)}`, {
+  const stopOfRoute = await tdxBasicGet(env, busPath("StopOfRoute", city), {
     $filter: `RouteID eq ${odataStringLiteral(routeId)}`,
     $top: "10",
   });
@@ -356,7 +389,7 @@ async function handleRouteTimetable(env, url) {
     return jsonResponse({ error: "city, routeId, and stopId query params are required" }, 400);
   }
   for (const cityCode of city.split("+")) {
-    const rows = await tdxBasicGet(env, `/Bus/DailyStopTimeTable/City/${encodeURIComponent(cityCode)}`, {
+    const rows = await tdxBasicGet(env, busPath("DailyStopTimeTable", cityCode), {
       $filter: `RouteID eq ${odataStringLiteral(routeId)}`,
       $top: "10",
     });
@@ -383,7 +416,7 @@ async function handleRouteSearch(env, url) {
   }
   const kw = odataStringLiteral(keyword);
   const filter = `contains(RouteName/Zh_tw,${kw}) or (RouteName/En ne null and contains(RouteName/En,${kw}))`;
-  const routes = await tdxBasicGet(env, `/Bus/Route/City/${encodeURIComponent(city)}`, {
+  const routes = await tdxBasicGet(env, busPath("Route", city), {
     $filter: filter,
     $top: "50",
   });
@@ -417,8 +450,8 @@ async function handleNetwork(env, url) {
   // single Worker invocation's execution limit -- it's kept for
   // programmatic/manual use where the caller can retry across separate
   // requests if needed.
-  const stations = await tdxBasicGetAllPages(env, `/Bus/Station/City/${encodeURIComponent(city)}`, {});
-  const stopOfRoute = await tdxBasicGetAllPages(env, `/Bus/StopOfRoute/City/${encodeURIComponent(city)}`, {});
+  const stations = await tdxBasicGetAllPages(env, busPath("Station", city), {});
+  const stopOfRoute = await tdxBasicGetAllPages(env, busPath("StopOfRoute", city), {});
 
   return jsonResponse({
     stations: stations.map((s) => ({
@@ -696,6 +729,172 @@ async function handleGeocode(url) {
   return jsonResponse({ lat: parseFloat(r.lat), lng: parseFloat(r.lon), displayName: r.display_name });
 }
 
+function minutesUntilFromRecord(item) {
+  if (item.EstimateTime != null) return item.EstimateTime / 60;
+  if (item.NextBusTime) return (new Date(item.NextBusTime).getTime() - Date.now()) / 60000;
+  return null;
+}
+
+// Push subscription endpoints (very long FCM/Mozilla/etc URLs) hashed down
+// to a fixed-length KV key.
+async function subKey(endpoint) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(endpoint));
+  return "sub:" + [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function handlePushVapidKey(env) {
+  return jsonResponse({ publicKey: env.VAPID_PUBLIC_KEY });
+}
+
+async function handlePushWatch(env, body) {
+  const { subscription, watch } = body || {};
+  if (!subscription?.endpoint || !watch?.city || !watch?.stopId || !watch?.routeId) {
+    return jsonResponse({ error: "subscription and watch {city, stopId, routeId} are required" }, 400);
+  }
+  const key = await subKey(subscription.endpoint);
+  const existing = (await env.PUSH_SUBS.get(key, "json")) || { watches: [] };
+  const watchId = `${watch.city}:${watch.stopId}:${watch.routeId}:${watch.direction ?? 0}`;
+  const watches = existing.watches.filter((w) => w.id !== watchId);
+  watches.push({
+    id: watchId,
+    city: watch.city,
+    stopId: watch.stopId,
+    routeId: watch.routeId,
+    direction: watch.direction ?? 0,
+    label: watch.label || "",
+    // Clamp to a sane range -- this is user input reaching a value that
+    // gates real push sends, not just display.
+    thresholdMinutes: Math.min(Math.max(Number(watch.thresholdMinutes) || 5, 1), 30),
+    armed: true,
+    lastNotifiedAt: null,
+  });
+  await env.PUSH_SUBS.put(key, JSON.stringify({ subscription, watches }));
+  return jsonResponse({ watches });
+}
+
+async function handlePushUnwatch(env, body) {
+  const { endpoint, watchId } = body || {};
+  if (!endpoint || !watchId) {
+    return jsonResponse({ error: "endpoint and watchId are required" }, 400);
+  }
+  const key = await subKey(endpoint);
+  const existing = await env.PUSH_SUBS.get(key, "json");
+  if (!existing) return jsonResponse({ watches: [] });
+  const watches = existing.watches.filter((w) => w.id !== watchId);
+  if (watches.length === 0) {
+    await env.PUSH_SUBS.delete(key);
+  } else {
+    await env.PUSH_SUBS.put(key, JSON.stringify({ ...existing, watches }));
+  }
+  return jsonResponse({ watches });
+}
+
+// Cron entry point (see wrangler.toml's [triggers]). Checks every stored
+// watch's live ETA and sends a Web Push when a bus crosses its threshold.
+//
+// TDX-call budget: this account's quota is 5 req/min, shared with live user
+// traffic hitting the other endpoints above. Every subscription's watches
+// are grouped by city so each (city, stopId) combination costs one TDX call
+// total regardless of how many people are watching it, and city groups are
+// spaced 800ms apart so a run with several cities in play doesn't itself
+// burst past the quota. The slice(0, 4) below additionally bounds the
+// worst case per run -- if watches ever span more than 4 cities at once,
+// the rest just wait for the next run a few minutes later rather than
+// pushing this cron run's own call volume higher.
+async function runPushCheck(env) {
+  if (!env.PUSH_SUBS) return;
+  const list = await env.PUSH_SUBS.list();
+  const subs = (await Promise.all(list.keys.map((k) => env.PUSH_SUBS.get(k.name, "json")))).filter(
+    (s) => s?.subscription?.endpoint && Array.isArray(s.watches) && s.watches.length > 0
+  );
+  if (subs.length === 0) return;
+
+  const stopIdsByCity = new Map();
+  for (const sub of subs) {
+    for (const w of sub.watches) {
+      if (!stopIdsByCity.has(w.city)) stopIdsByCity.set(w.city, new Set());
+      stopIdsByCity.get(w.city).add(w.stopId);
+    }
+  }
+
+  const cities = [...stopIdsByCity.keys()].slice(0, 4);
+  const etaByCityStop = new Map();
+  let first = true;
+  for (const city of cities) {
+    if (!first) await sleep(800);
+    first = false;
+    const stopIds = [...stopIdsByCity.get(city)];
+    const filter = stopIds.map((id) => `StopID eq ${odataStringLiteral(id)}`).join(" or ");
+    try {
+      const eta = await tdxBasicGet(env, busPath("EstimatedTimeOfArrival", city), { $filter: filter, $top: "200" });
+      const byStop = new Map();
+      for (const e of eta) {
+        if (!byStop.has(e.StopID)) byStop.set(e.StopID, []);
+        byStop.get(e.StopID).push(e);
+      }
+      etaByCityStop.set(city, byStop);
+    } catch {
+      // best-effort: this city's watches just get skipped this run rather
+      // than aborting the whole cron pass over one bad upstream call.
+    }
+  }
+
+  const vapid = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
+  const writes = [];
+  for (const sub of subs) {
+    let changed = false;
+    let expired = false;
+    for (const w of sub.watches) {
+      const records = (etaByCityStop.get(w.city)?.get(w.stopId) || []).filter(
+        (e) => e.RouteID === w.routeId && e.Direction === w.direction
+      );
+      const minutesList = records.map(minutesUntilFromRecord).filter((m) => m != null);
+      const minutes = minutesList.length > 0 ? Math.min(...minutesList) : null;
+      const arriving = minutes != null && minutes <= w.thresholdMinutes;
+
+      if (arriving && w.armed) {
+        try {
+          const payload = await buildPushPayload(
+            {
+              data: JSON.stringify({
+                title: w.label || "Bus arriving",
+                body: `${w.label || w.routeId}: about ${Math.round(minutes)} min`,
+                tag: w.id,
+              }),
+              options: { ttl: 300 },
+            },
+            sub.subscription,
+            vapid
+          );
+          const res = await fetch(sub.subscription.endpoint, payload);
+          if (res.status === 404 || res.status === 410) {
+            // Push service says this subscription is gone (user revoked
+            // permission, browser data cleared, etc.) -- drop it entirely
+            // rather than retrying it forever.
+            expired = true;
+            break;
+          }
+          w.armed = false;
+          w.lastNotifiedAt = Date.now();
+          changed = true;
+        } catch {
+          // best-effort: leave armed, this watch just gets retried next run
+        }
+      } else if (!arriving && !w.armed) {
+        // Bus moved past threshold/departed -- reset so the next bus on
+        // this route+stop can trigger its own notification.
+        w.armed = true;
+        changed = true;
+      }
+    }
+
+    const key = await subKey(sub.subscription.endpoint);
+    if (expired) writes.push(env.PUSH_SUBS.delete(key));
+    else if (changed) writes.push(env.PUSH_SUBS.put(key, JSON.stringify(sub)));
+  }
+  await Promise.all(writes);
+}
+
 // TDX's free/basic tier rate limit is tight, and endpoints like /api/network
 // fan out into several paginated upstream calls per request. Cache
 // slow-changing responses (city list, route/stop metadata) with Cloudflare's
@@ -724,6 +923,13 @@ const ROUTES = {
   "/api/station-stops": (env, url, ctx) => handleStationStops(env, url),
   "/api/geocode": (env, url, ctx) => handleGeocode(url),
   "/api/route-timetable": (env, url, ctx) => handleRouteTimetable(env, url),
+  "/api/push-vapid-key": (env, url, ctx) => handlePushVapidKey(env),
+};
+
+// Unlike ROUTES above (cacheable GETs), these mutate state and are never cached.
+const POST_ROUTES = {
+  "/api/push-watch": (env, body) => handlePushWatch(env, body),
+  "/api/push-unwatch": (env, body) => handlePushUnwatch(env, body),
 };
 
 export default {
@@ -733,6 +939,18 @@ export default {
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: CORS_HEADERS });
     }
+
+    if (request.method === "POST") {
+      const handler = POST_ROUTES[url.pathname];
+      if (!handler) return jsonResponse({ error: "Not found" }, 404);
+      try {
+        const body = await request.json().catch(() => ({}));
+        return await handler(env, body);
+      } catch (err) {
+        return jsonResponse({ error: String(err && err.message ? err.message : err) }, 502);
+      }
+    }
+
     if (request.method !== "GET") {
       return jsonResponse({ error: "Method not allowed" }, 405);
     }
@@ -763,5 +981,9 @@ export default {
     } catch (err) {
       return jsonResponse({ error: String(err && err.message ? err.message : err) }, 502);
     }
+  },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runPushCheck(env));
   },
 };

@@ -1,7 +1,22 @@
 name = "tw-transit-proxy"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
+# @block65/webcrypto-web-push probes for node:crypto before falling back to
+# Web Crypto; without this flag that probe throws in the Workers runtime.
+compatibility_flags = ["nodejs_compat"]
 
 # Secrets (never put these here as plain values):
 #   wrangler secret put TDX_CLIENT_ID
 #   wrangler secret put TDX_CLIENT_SECRET
+#   wrangler secret put VAPID_PRIVATE_KEY
+
+[vars]
+VAPID_SUBJECT = "mailto:890718ding3316@arch.nycu.edu.tw"
+VAPID_PUBLIC_KEY = "BIUGIqOAHTQz5S19zV38pGyuSI80Sh0PIuw9Sl0sZ4q3y5MLxxx_louyMAgFn8jNmhGnseRak2fFuAe5Q2x90kc"
+
+[[kv_namespaces]]
+binding = "PUSH_SUBS"
+id = "30bb4346faf34cc694f6de3301eb4167"
+
+[triggers]
+crons = ["*/5 * * * *"]

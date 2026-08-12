@@ -20,6 +20,22 @@ async function getJson(path, params) {
   return resp.json();
 }
 
+async function postJson(path, body) {
+  if (!API_BASE) {
+    throw new Error("API not configured (VITE_API_BASE missing)");
+  }
+  const resp = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const b = await resp.json().catch(() => ({}));
+    throw new Error(b.error || `Request failed (${resp.status})`);
+  }
+  return resp.json();
+}
+
 export function getCities() {
   return getJson("/api/cities", {});
 }
@@ -94,4 +110,20 @@ export async function geocodeAddress(query) {
 
 export function getRouteTimetable(city, routeId, stopId) {
   return getJson("/api/route-timetable", { city, routeId, stopId });
+}
+
+// Arrival push notifications: subscription set up client-side via the
+// browser Push API (see utils/push.js), watches stored server-side in the
+// Worker's KV so the scheduled cron can check TDX and send a push even
+// when the app isn't open.
+export function getPushVapidKey() {
+  return getJson("/api/push-vapid-key", {});
+}
+
+export function pushWatch(subscription, watch) {
+  return postJson("/api/push-watch", { subscription, watch });
+}
+
+export function pushUnwatch(endpoint, watchId) {
+  return postJson("/api/push-unwatch", { endpoint, watchId });
 }

@@ -5,6 +5,7 @@ const TABS = [
   { key: "lines", labelKey: "tabLines" },
   { key: "navigation", labelKey: "tabNavigation" },
   { key: "schematic", labelKey: "tabSchematic" },
+  { key: "favorites", labelKey: "tabFavorites" },
 ];
 
 export default function TabNav({ active, onChange }) {

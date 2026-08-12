@@ -4,6 +4,7 @@ import CitySelect from "./CitySelect.jsx";
 import SearchBar from "./SearchBar.jsx";
 import { searchRoutes, getRouteStops, getStopEta } from "../api/client.js";
 import { minutesUntil, formatEstimate } from "../utils/eta.js";
+import { isFavoriteRoute, toggleFavoriteRoute, recordRecentRoute } from "../utils/personalization.js";
 import TimetableFallback from "./TimetableFallback.jsx";
 
 const ROUTE_LINE_COLOR = "#c0392b";
@@ -23,15 +24,16 @@ function directionDestination(directionEntry, lang) {
   return last ? localized(last.StopName, lang) : null;
 }
 
-export default function LinesTab({ setMapState, pendingRoute, onConsumePendingRoute }) {
+export default function LinesTab({ setMapState, pendingRoute, onConsumePendingRoute, initialCity }) {
   const { t, i18n } = useTranslation();
-  const [city, setCity] = useState("");
+  const [city, setCity] = useState(initialCity || "");
   const [results, setResults] = useState([]);
   const [selectedRoute, setSelectedRoute] = useState(null);
   const [directions, setDirections] = useState([]);
   const [activeDirection, setActiveDirection] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [favorite, setFavorite] = useState(false);
 
   function handleSearch(keyword) {
     if (!city) {
@@ -46,12 +48,18 @@ export default function LinesTab({ setMapState, pendingRoute, onConsumePendingRo
       .finally(() => setLoading(false));
   }
 
-  function handleSelectRoute(route) {
+  function handleSelectRoute(route, cityOverride) {
+    // cityOverride covers the cross-tab jump below, where setCity(...) hasn't
+    // re-rendered yet so the `city` state var here would still be stale.
+    const routeCity = cityOverride || city;
     setSelectedRoute(route);
     setDirections([]);
     setLoading(true);
     setError(null);
-    getRouteStops(city, route.RouteID)
+    const routeName = localized(route.RouteName, i18n.language);
+    setFavorite(isFavoriteRoute(routeCity, route.RouteID));
+    recordRecentRoute(routeCity, route.RouteID, routeName);
+    getRouteStops(routeCity, route.RouteID)
       .then((data) => {
         setDirections(data);
         setActiveDirection(data[0]?.Direction ?? 0);
@@ -75,17 +83,20 @@ export default function LinesTab({ setMapState, pendingRoute, onConsumePendingRo
     if (pendingRoute.city) setCity(pendingRoute.city);
 
     if (pendingRoute.routeId && pendingRoute.city) {
-      handleSelectRoute({
-        RouteID: pendingRoute.routeId,
-        RouteName: { Zh_tw: pendingRoute.routeName, En: pendingRoute.routeName },
-      });
+      handleSelectRoute(
+        {
+          RouteID: pendingRoute.routeId,
+          RouteName: { Zh_tw: pendingRoute.routeName, En: pendingRoute.routeName },
+        },
+        pendingRoute.city
+      );
     } else if (pendingRoute.keyword && pendingRoute.city) {
       setLoading(true);
       setError(null);
       searchRoutes(pendingRoute.city, pendingRoute.keyword)
         .then((found) => {
           setResults(found);
-          if (found.length > 0) handleSelectRoute(found[0]);
+          if (found.length > 0) handleSelectRoute(found[0], pendingRoute.city);
           else setError(t("noResults"));
         })
         .catch((err) => setError(err.message))
@@ -183,7 +194,23 @@ export default function LinesTab({ setMapState, pendingRoute, onConsumePendingRo
           <button type="button" className="back-button" onClick={backToSearch}>
             {t("backToSearch")}
           </button>
-          <h2>{localized(selectedRoute.RouteName, i18n.language)}</h2>
+          <h2>
+            {localized(selectedRoute.RouteName, i18n.language)}
+            <button
+              type="button"
+              className={`favorite-star ${favorite ? "favorite-star-active" : ""}`}
+              aria-label={t(favorite ? "removeFromFavorites" : "addToFavorites")}
+              onClick={() =>
+                setFavorite(
+                  toggleFavoriteRoute(city, selectedRoute.RouteID, localized(selectedRoute.RouteName, i18n.language)).some(
+                    (f) => f.city === city && f.routeId === selectedRoute.RouteID
+                  )
+                )
+              }
+            >
+              {favorite ? "★" : "☆"}
+            </button>
+          </h2>
 
           {directions.length > 1 && (
             <div className="direction-tabs">

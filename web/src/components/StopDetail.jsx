@@ -3,8 +3,10 @@ import { useTranslation } from "react-i18next";
 import { getStopEta } from "../api/client.js";
 import { minutesUntil, formatEstimate } from "../utils/eta.js";
 import { compassLabel } from "../utils/compass.js";
+import { isFavoriteStop, toggleFavoriteStop } from "../utils/personalization.js";
 import TimetableFallback from "./TimetableFallback.jsx";
 import DepartureChips from "./DepartureChips.jsx";
+import NotifyToggle from "./NotifyToggle.jsx";
 
 const REFRESH_MS = 20000;
 
@@ -14,6 +16,7 @@ export default function StopDetail({ city, station, onBack, onRouteClick }) {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expandedKey, setExpandedKey] = useState(null);
+  const [favorite, setFavorite] = useState(() => isFavoriteStop(city, station.StationID));
 
   const stopIds = useMemo(
     () => [...new Set((station.Stops || []).map((s) => s.StopID).filter(Boolean))],
@@ -68,6 +71,14 @@ export default function StopDetail({ city, station, onBack, onRouteClick }) {
       <h2>
         {stationName}
         {bearing && <span className="bearing-badge">({bearing})</span>}
+        <button
+          type="button"
+          className={`favorite-star ${favorite ? "favorite-star-active" : ""}`}
+          aria-label={t(favorite ? "removeFromFavorites" : "addToFavorites")}
+          onClick={() => setFavorite(toggleFavoriteStop(city, station).some((f) => f.city === city && f.station.StationID === station.StationID))}
+        >
+          {favorite ? "★" : "☆"}
+        </button>
       </h2>
       <p className="hint-text">{t("autoRefreshHint")}</p>
 
@@ -112,7 +123,14 @@ export default function StopDetail({ city, station, onBack, onRouteClick }) {
                   {formatEstimate(item, t)}
                 </span>
               </div>
-              {expandedKey === key && <DepartureChips item={item} />}
+              {expandedKey === key && (
+                <>
+                  <DepartureChips item={item} />
+                  <div className="eta-extra">
+                    <NotifyToggle city={city} item={item} label={`${routeName} @ ${stationName}`} />
+                  </div>
+                </>
+              )}
               {minutes == null && item.StopStatus !== 4 && (
                 <div className="eta-extra">
                   <TimetableFallback city={city} routeId={item.RouteID} stopId={item.StopID} />

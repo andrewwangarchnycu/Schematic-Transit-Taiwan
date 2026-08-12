@@ -6,6 +6,7 @@ import StopList from "./StopList.jsx";
 import StopDetail from "./StopDetail.jsx";
 import NearbyCard from "./NearbyCard.jsx";
 import { searchStations, getNearby, geocodeAddress } from "../api/client.js";
+import { recordRecentStop } from "../utils/personalization.js";
 
 const MODE_MARKER_COLOR = {
   bus: "#3457ea",
@@ -15,15 +16,32 @@ const MODE_MARKER_COLOR = {
   bike: "#f39c12",
 };
 
-export default function StationsTab({ setMapState, onRouteClick }) {
+export default function StationsTab({ setMapState, onRouteClick, initialCity, pendingStation, onConsumePendingStation }) {
   const { t, i18n } = useTranslation();
-  const [city, setCity] = useState("");
+  const [city, setCity] = useState(initialCity || "");
   const [results, setResults] = useState([]);
   const [nearbyItems, setNearbyItems] = useState(null);
   const [addressQuery, setAddressQuery] = useState(null);
   const [selectedStation, setSelectedStation] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  function openStation(stationCity, station) {
+    setCity(stationCity);
+    setResults([]);
+    setNearbyItems(null);
+    setAddressQuery(null);
+    setSelectedStation(station);
+    recordRecentStop(stationCity, station);
+  }
+
+  // Cross-tab navigation from FavoritesTab: a saved or recently viewed stop.
+  useEffect(() => {
+    if (!pendingStation) return;
+    openStation(pendingStation.city, pendingStation.station);
+    onConsumePendingStation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingStation]);
 
   async function handleSearch(keyword) {
     if (!city) {
@@ -104,7 +122,7 @@ export default function StationsTab({ setMapState, onRouteClick }) {
           lng: item.lng,
           label: item.name,
           color: MODE_MARKER_COLOR[item.mode],
-          onClick: item.mode === "bus" ? () => setSelectedStation(item.station) : undefined,
+          onClick: item.mode === "bus" ? () => openStation(city, item.station) : undefined,
         }));
       setMapState({ markers, polylines: [] });
       return;
@@ -116,7 +134,7 @@ export default function StationsTab({ setMapState, onRouteClick }) {
         lat: s.StationPosition.PositionLat,
         lng: s.StationPosition.PositionLon,
         label: i18n.language === "zh-TW" ? s.StationName?.Zh_tw : s.StationName?.En || s.StationName?.Zh_tw,
-        onClick: () => setSelectedStation(s),
+        onClick: () => openStation(city, s),
       }));
     setMapState({ markers, polylines: [] });
   }, [results, nearbyItems, i18n.language, setMapState]);
@@ -149,14 +167,14 @@ export default function StationsTab({ setMapState, onRouteClick }) {
                 {addressQuery && <p className="hint-text">{t("addressSearchResultsFor", { query: addressQuery })}</p>}
                 <ul className="info-card-list">
                   {nearbyItems.map((item) => (
-                    <NearbyCard key={`${item.mode}-${item.id}`} item={item} onSelectBus={setSelectedStation} />
+                    <NearbyCard key={`${item.mode}-${item.id}`} item={item} onSelectBus={(s) => openStation(city, s)} />
                   ))}
                 </ul>
               </>
             )
           )}
 
-          {!loading && !nearbyItems && <StopList results={results} onSelect={setSelectedStation} />}
+          {!loading && !nearbyItems && <StopList results={results} onSelect={(s) => openStation(city, s)} />}
         </>
       )}
       {selectedStation && (

@@ -145,6 +145,37 @@ export function buildSchematic({ stations, routes }, cellSizeMeters) {
 
 const RAIL_MODE_COLORS = { thsr: "#e53935", metro: "#2e7d32" };
 
+// Official per-system fallback (used when a metro line's name doesn't match
+// any of the specific-line rules below, e.g. a system with just one line).
+const METRO_SYSTEM_COLORS = {
+  KRTC: "#e3002c",
+  TYMC: "#7b4397",
+  TMRT: "#00a650",
+  NTMC: "#ffd100",
+  KLRT: "#ee7203",
+};
+
+// Real line names -> each system's actual official color, so the overlay
+// reads like the real system maps instead of one flat green for every
+// metro line in the country. Matched against the route name TDX returns
+// (Rail/Metro/StationOfRoute's RouteName), zh or en.
+const METRO_LINE_COLOR_RULES = [
+  { match: /淡水信義|Tamsui.?Xinyi/i, color: "#e3002c" },
+  { match: /板南|Bannan/i, color: "#0070bd" },
+  { match: /松山新店|Songshan.?Xindian/i, color: "#008659" },
+  { match: /中和新蘆|Zhonghe.?Xinlu/i, color: "#f8b61c" },
+  { match: /文湖|Wenhu/i, color: "#c48c31" },
+  { match: /環狀|Circular/i, color: "#ffd100" },
+  { match: /紅線|Red Line/i, color: "#e3002c" },
+  { match: /橘線|Orange Line/i, color: "#f8a800" },
+];
+
+function metroLineColor(line) {
+  const rule = METRO_LINE_COLOR_RULES.find((r) => r.match.test(line.name));
+  if (rule) return rule.color;
+  return METRO_SYSTEM_COLORS[line.system] || RAIL_MODE_COLORS.metro;
+}
+
 // Projects the nationwide rail-network.json (see
 // scripts/fetch-rail-network.mjs) into the SAME grid the bus schematic
 // already computed (same meanLat/cellSize), then keeps only what falls
@@ -162,14 +193,22 @@ export function buildRailOverlay(railNetwork, meanLat, cellSizeMeters, busBounds
 
   const grid = new Map();
   const nodes = [];
+  // Counts stations per grid cell regardless of mode/system, so a TRA+THSR+
+  // Metro complex (e.g. Taipei Main) or a two-line metro interchange -- each
+  // a separate StationID in TDX, just colocated -- reads as one interchange
+  // rather than silently overlapping icons with no visual cue.
+  const cellStationCount = new Map();
   for (const s of railNetwork.stations) {
     if (!s.StationPosition) continue;
     const [xm, ym] = project(s.StationPosition.PositionLon, s.StationPosition.PositionLat);
     const [gx, gy] = snapToGrid(xm, ym, cellSizeMeters);
     if (gx < minX || gx > maxX || gy < minY || gy > maxY) continue;
     grid.set(s.StationID, [gx, gy]);
+    const cellKey = `${gx},${gy}`;
+    cellStationCount.set(cellKey, (cellStationCount.get(cellKey) || 0) + 1);
     nodes.push({
       key: `${s.mode}-${s.StationID}`,
+      cellKey,
       gx,
       gy,
       name: s.StationName?.Zh_tw || s.StationName?.En || s.StationID,
@@ -178,6 +217,16 @@ export function buildRailOverlay(railNetwork, meanLat, cellSizeMeters, busBounds
       lat: s.StationPosition.PositionLat,
       lng: s.StationPosition.PositionLon,
     });
+  }
+
+  const interchanges = [];
+  const seenInterchangeCells = new Set();
+  for (const node of nodes) {
+    node.isInterchange = (cellStationCount.get(node.cellKey) || 0) > 1;
+    if (node.isInterchange && !seenInterchangeCells.has(node.cellKey)) {
+      seenInterchangeCells.add(node.cellKey);
+      interchanges.push({ key: `interchange-${node.cellKey}`, gx: node.gx, gy: node.gy });
+    }
   }
 
   const lines = [];
@@ -197,12 +246,13 @@ export function buildRailOverlay(railNetwork, meanLat, cellSizeMeters, busBounds
       key: line.key,
       name: line.name,
       mode: line.mode,
-      color: RAIL_MODE_COLORS[line.mode] || routeColor(line.name),
+      system: line.system,
+      color: line.mode === "metro" ? metroLineColor(line) : RAIL_MODE_COLORS[line.mode] || routeColor(line.name),
       path: fullPath,
     });
   }
 
-  return { nodes, lines };
+  return { nodes, lines, interchanges };
 }
 
 export function computeGridBounds(nodes, lines) {
